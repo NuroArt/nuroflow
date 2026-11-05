@@ -37,6 +37,11 @@ class Base(DeclarativeBase):
 
     metadata = sa.MetaData(naming_convention=NAMING_CONVENTION)
 
+    # Fetch server-generated values (created_at, updated_at via onupdate) with RETURNING
+    # on INSERT and UPDATE. Without this, reading `updated_at` after a commit triggers a
+    # lazy load, which raises MissingGreenlet under asyncio.
+    __mapper_args__ = {"eager_defaults": True}  # noqa: RUF012
+
     type_annotation_map = {  # noqa: RUF012 - SQLAlchemy reads this class attribute
         datetime: sa.TIMESTAMP(timezone=True),
         uuid.UUID: postgresql.UUID(as_uuid=True),

@@ -20,7 +20,10 @@ lead.captured ─▶ AI qualify ─▶ store ─▶ AI summary ─▶ Telegram a
 - **Durable retries.** Exponential backoff with jitter, visible per attempt, and they survive
   restarts. ([ADR-0003](docs/adr/0003-engine-managed-retries.md))
 - **Safe by default.** Workflows are validated data, not user code, and templates run in Jinja's
-  sandbox. ([ADR-0004](docs/adr/0004-declarative-operators-no-arbitrary-code.md))
+  sandbox. Cycles, typos and reads from non-upstream tasks are rejected *before* saving.
+  ([ADR-0004](docs/adr/0004-declarative-operators-no-arbitrary-code.md), [ENGINE.md](docs/ENGINE.md))
+- **Exactly-once state transitions.** Compare-and-set claims, run-row locks and attempt
+  fencing are proven by tests with concurrent workers and a real Celery worker.
 - **AI tasks.** OpenAI and Anthropic sit behind one provider interface, with JSON-schema-validated
   output and token/cost tracking.
 - **Serious auth.** JWT access tokens, rotating refresh tokens with theft detection, scoped
@@ -41,15 +44,18 @@ flowchart LR
     W --> X[OpenAI · Anthropic · Telegram · HTTP]
 ```
 
-Full design: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** · Schema: **[docs/DATABASE.md](docs/DATABASE.md)** · Auth: **[docs/AUTH.md](docs/AUTH.md)** · Decisions: **[docs/adr/](docs/adr/)**
+Full design: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** · Schema: **[docs/DATABASE.md](docs/DATABASE.md)** · Auth: **[docs/AUTH.md](docs/AUTH.md)** · Engine: **[docs/ENGINE.md](docs/ENGINE.md)** · Decisions: **[docs/adr/](docs/adr/)**
 
 ## Quick start
 
 ```bash
 make install && make up && make migrate && make check
 make admin email=you@example.com   # first admin (prompts for a password)
-make api                           # → http://127.0.0.1:8000/docs
+make api                           # terminal 1 → http://127.0.0.1:8000/docs
+make worker                        # terminal 2 → executes tasks
 ```
+
+Then import and run the reference workflow: see [docs/ENGINE.md](docs/ENGINE.md#running-it).
 
 See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for details.
 
@@ -64,8 +70,8 @@ OpenAI · Anthropic · Telegram Bot API · React + Tailwind · Docker · GitHub 
 |---|---|---|
 | 1 | Architecture, repo scaffold, full schema + migration, dev environment | ✅ Done |
 | 2 | FastAPI foundation, settings, DB sessions, JWT auth, API keys, RBAC | ✅ Done |
-| 3 | WorkflowSpec + DAG validation, orchestrator, executor, operators, Celery | ⏳ Next |
-| 4 | Scheduler: cron, retries, reaper, timeouts, events & webhooks | ⬜ |
+| 3 | WorkflowSpec + DAG validation, orchestrator, executor, operators, Celery | ✅ Done |
+| 4 | Scheduler: cron, retries, reaper, timeouts, events & webhooks | ⏳ Next |
 | 5 | Telegram, OpenAI, Anthropic, notification service | ⬜ |
 | 6 | Logging, metrics, SSE log tail, React dashboard | ⬜ |
 | 7 | Production Docker, hardening, CI/CD, test suite ≥ 85% | ⬜ |

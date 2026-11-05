@@ -22,6 +22,7 @@ EXPECTED_TABLES = {
     "notification_channels",
     "notification_subscriptions",
     "notification_deliveries",
+    "data_records",
 }
 
 # Foreign keys that intentionally have no supporting index. Postgres doesn't index FKs

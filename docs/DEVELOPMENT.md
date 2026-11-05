@@ -15,11 +15,11 @@
 git clone https://github.com/<you>/nuroflow.git && cd nuroflow
 make install     # uv sync + pre-commit hooks + backend/.env from .env.example
 make up          # Postgres 16 + Redis 7, waits until healthy
-make migrate     # creates all 15 tables
+make migrate     # creates all 16 tables
 make check       # lint + mypy strict + tests + migration drift check
 ```
 
-Expected result: `124 passed`, coverage ~96%, `No new upgrade operations detected.`
+Expected result: `224 passed`, coverage ~94%, `No new upgrade operations detected.`
 
 ## Run the API
 
@@ -30,6 +30,16 @@ make api                           # http://127.0.0.1:8000/docs (auto-reload)
 
 In Swagger UI click **Authorize** and paste an access token from `POST /api/v1/auth/login`,
 or an API key in the `X-API-Key` field. See [AUTH.md](AUTH.md) for every flow.
+
+## Run workflows
+
+```bash
+make worker                        # second terminal: consumes default, ai, notifications
+```
+
+Import `examples/workflows/lead-qualification.yaml` with `POST /api/v1/workflows:import` and
+start it with `POST /api/v1/workflows/{id}/runs`. [ENGINE.md](ENGINE.md#running-it) has the
+curl commands. LLM and Telegram calls are simulated until Phase 5.
 
 ## Daily loop
 

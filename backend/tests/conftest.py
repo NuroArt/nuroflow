@@ -20,8 +20,12 @@ from __future__ import annotations
 
 import os
 import secrets
+import uuid
 from collections.abc import AsyncIterator, Iterator
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import httpx
 import pytest
@@ -31,13 +35,25 @@ from alembic.config import Config
 from redis import Redis as SyncRedis
 from redis.exceptions import RedisError
 from sqlalchemy.engine import URL, Engine, make_url
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, sessionmaker
 
 from nuroflow.api.container import AppContainer, build_container
 from nuroflow.api.main import create_app
+from nuroflow.core.clock import FrozenClock
 from nuroflow.core.config import Environment, Settings, get_settings
+from nuroflow.core.ids import uuid7
 from nuroflow.core.rate_limit import InMemoryRateLimiter
-from nuroflow.db.models import Base
+from nuroflow.db.models import Base, TaskRun, User, Workflow, WorkflowRun, WorkflowVersion
+from nuroflow.domain.enums import RunTriggerType
+from nuroflow.domain.workflow_spec import WorkflowSpec
+from nuroflow.engine.data_store import SqlDataStore
+from nuroflow.engine.executor import TaskExecutor
+from nuroflow.engine.inline import InlineDispatcher
+from nuroflow.engine.orchestrator import Orchestrator
+from nuroflow.engine.planner import RunTrigger, plan_run
+from nuroflow.integrations.llm.fake import FakeLLMProvider
+from nuroflow.integrations.telegram.fake import FakeTelegramClient
+from nuroflow.operators.registry import OperatorRegistry, build_registry
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 TEST_REDIS_URL = os.environ.get("NUROFLOW_TEST_REDIS_URL", "redis://localhost:6379/15")
@@ -153,9 +169,17 @@ async def container(
     alembic_config: Config,
     engine: Engine,
     rate_limiter: InMemoryRateLimiter,
+    harness: EngineHarness,
 ) -> AsyncIterator[AppContainer]:
     command.upgrade(alembic_config, "head")  # no-op when already at head
-    built = build_container(api_settings, rate_limiter=rate_limiter)
+    # Runs triggered over HTTP execute synchronously on the real engine (inline dispatch),
+    # sharing the harness's fake LLM/Telegram so tests can script and inspect them.
+    built = build_container(
+        api_settings,
+        rate_limiter=rate_limiter,
+        dispatcher=harness.dispatcher,
+        registry=harness.registry,
+    )
     try:
         yield built
     finally:
@@ -171,3 +195,111 @@ async def client(container: AppContainer) -> AsyncIterator[httpx.AsyncClient]:
     transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as c:
         yield c
+
+
+# --------------------------------------------------------------------------- #
+# Engine tests (Phase 3)
+# --------------------------------------------------------------------------- #
+@dataclass
+class EngineHarness:
+    """A real engine (executor + orchestrator + SQL) with fake providers and inline dispatch."""
+
+    session_factory: sessionmaker[Session]
+    executor: TaskExecutor
+    dispatcher: InlineDispatcher
+    clock: FrozenClock
+    llm: FakeLLMProvider
+    telegram: FakeTelegramClient
+    registry: OperatorRegistry
+    owner_id: uuid.UUID = field(default_factory=uuid7)
+
+    def create_workflow(self, definition: dict[str, Any]) -> tuple[uuid.UUID, uuid.UUID]:
+        spec = WorkflowSpec.model_validate(definition)
+        with self.session_factory() as s, s.begin():
+            if s.get(User, self.owner_id) is None:
+                s.add(
+                    User(id=self.owner_id, email=f"{self.owner_id.hex}@t.io", hashed_password="x")
+                )
+                s.flush()
+            wf = Workflow(id=uuid7(), owner_id=self.owner_id, slug=spec.slug, name=spec.name)
+            s.add(wf)
+            s.flush()
+            version = WorkflowVersion(
+                id=uuid7(),
+                workflow_id=wf.id,
+                version=1,
+                definition=spec.model_dump(mode="json"),
+                checksum=spec.checksum(),
+            )
+            s.add(version)
+            s.flush()
+            wf.current_version_id = version.id
+            return wf.id, version.id
+
+    def start_run(
+        self,
+        definition: dict[str, Any],
+        *,
+        payload: dict[str, Any] | None = None,
+        params: dict[str, Any] | None = None,
+        dispatch: bool = True,
+    ) -> uuid.UUID:
+        workflow_id, version_id = self.create_workflow(definition)
+        run, requests = plan_run(
+            workflow_id=workflow_id,
+            version_id=version_id,
+            spec=WorkflowSpec.model_validate(definition),
+            trigger=RunTrigger(type=RunTriggerType.MANUAL, payload=payload or {}),
+            params=params or {},
+            queue_for=lambda name: self.registry.get(name).default_queue,
+            now=self.clock.now(),
+        )
+        with self.session_factory() as s, s.begin():
+            s.add(run)
+        if dispatch:
+            self.dispatcher.enqueue(requests)
+        return run.id
+
+    def run(self, run_id: uuid.UUID) -> tuple[WorkflowRun, dict[str, TaskRun]]:
+        with self.session_factory() as s:
+            run = s.get(WorkflowRun, run_id)
+            assert run is not None
+            tasks = s.scalars(sa.select(TaskRun).where(TaskRun.workflow_run_id == run_id)).all()
+            return run, {t.task_key: t for t in tasks}
+
+
+@pytest.fixture
+def sync_sessions(engine: Engine, alembic_config: Config) -> Iterator[sessionmaker[Session]]:
+    command.upgrade(alembic_config, "head")
+    yield sessionmaker(engine, expire_on_commit=False)
+    tables = ", ".join(t.name for t in Base.metadata.sorted_tables)
+    with engine.begin() as conn:
+        conn.execute(sa.text(f"TRUNCATE {tables} RESTART IDENTITY CASCADE"))
+
+
+@pytest.fixture
+def harness(sync_sessions: sessionmaker[Session]) -> EngineHarness:
+    clock = FrozenClock(datetime.now(UTC))
+    llm, telegram = FakeLLMProvider(), FakeTelegramClient()
+    registry = build_registry(
+        llm_providers={"fake": llm, "openai": llm, "anthropic": llm},
+        telegram=telegram,
+        data_store=SqlDataStore(sync_sessions),
+        load_plugins=False,
+    )
+    executor = TaskExecutor(
+        session_factory=sync_sessions,
+        registry=registry,
+        orchestrator=Orchestrator(clock=clock),
+        clock=clock,
+        heartbeat_interval_seconds=0,
+    )
+    return EngineHarness(
+        session_factory=sync_sessions,
+        executor=executor,
+        dispatcher=InlineDispatcher(executor),
+        clock=clock,
+        llm=llm,
+        telegram=telegram,
+        registry=registry,
+    )

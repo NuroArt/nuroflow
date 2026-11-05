@@ -1,0 +1,50 @@
+"""``telegram.send``: send a message through the Telegram port."""
+
+from __future__ import annotations
+
+from typing import Any, Literal
+
+from pydantic import Field
+
+from nuroflow.integrations.telegram.base import TelegramClient, TelegramError, TelegramMessage
+from nuroflow.operators.base import (
+    NonRetryableError,
+    Operator,
+    OperatorContext,
+    OperatorInput,
+    RetryableError,
+)
+
+
+class TelegramSendInput(OperatorInput):
+    chat_id: str | int
+    text: str = Field(min_length=1, max_length=4096)  # Telegram's hard limit
+    parse_mode: Literal["HTML", "MarkdownV2"] | None = None
+    disable_notification: bool = False
+    connection: str | None = Field(
+        default=None, description="Name of a telegram connection holding the bot token (Phase 5)."
+    )
+
+
+class TelegramSendOperator(Operator):
+    name = "telegram.send"
+    description = "Send a Telegram message. Output: {message_id, chat_id}."
+    input_model = TelegramSendInput
+    default_queue = "notifications"
+
+    def __init__(self, client: TelegramClient) -> None:
+        self._client = client
+
+    def execute(self, inputs: TelegramSendInput, ctx: OperatorContext) -> dict[str, Any]:
+        message = TelegramMessage(
+            chat_id=str(inputs.chat_id),
+            text=inputs.text,
+            parse_mode=inputs.parse_mode,
+            disable_notification=inputs.disable_notification,
+        )
+        try:
+            message_id = self._client.send_message(message)
+        except TelegramError as exc:
+            raise (RetryableError if exc.retryable else NonRetryableError)(str(exc)) from exc
+        ctx.log("telegram message sent", chat_id=message.chat_id, message_id=message_id)
+        return {"message_id": message_id, "chat_id": message.chat_id}

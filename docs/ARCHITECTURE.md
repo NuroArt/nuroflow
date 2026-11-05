@@ -221,8 +221,12 @@ tasks:
     retries: 3
     inputs:
       provider: anthropic
+      model: claude-sonnet-4-5
       prompt: "Score this lead 0-100 and explain: {{ trigger.payload | tojson }}"
-      output_schema: {score: integer, tier: string, reason: string}
+      output_schema:            # JSON Schema; the answer is validated before anyone sees it
+        type: object
+        required: [score, tier, reason]
+        properties: { score: { type: integer }, tier: { enum: [hot, warm, cold] }, reason: { type: string } }
   - key: store
     operator: data.store
     depends_on: [qualify]
@@ -232,11 +236,11 @@ tasks:
   - key: summarize
     operator: ai.complete
     depends_on: [store]
-    inputs: { provider: openai, prompt: "One-line sales summary: {{ tasks.qualify.output | tojson }}" }
+    inputs: { provider: openai, model: gpt-4o-mini, prompt: "One-line sales summary: {{ tasks.qualify.output | tojson }}" }
   - key: alert
     operator: telegram.send
     depends_on: [summarize]
-    inputs: { connection: sales-bot, text: "🔥 New {{ tasks.qualify.output.tier }} lead: {{ tasks.summarize.output.text }}" }
+    inputs: { chat_id: "{{ params.sales_chat_id }}", text: "🔥 New {{ tasks.qualify.output.tier }} lead: {{ tasks.summarize.output.text }}" }
 ```
 
 The final step from the brief ("Mark Workflow Complete") is **not a task** — it's the engine
@@ -520,7 +524,7 @@ process role is just the container command (`nuroflow-api`, `nuroflow-scheduler`
 |---|---|---|
 | **1** ✅ | Architecture, repo scaffold, full DB schema + initial migration, dev environment | `make up && make migrate` creates schema; upgrade/downgrade round-trips; drift check passes |
 | **2** ✅ | FastAPI app factory, settings, DB sessions, auth (JWT, refresh rotation, API keys, RBAC) | Auth flows covered by tests; OpenAPI published |
-| **3** | WorkflowSpec + DAG validation, Orchestrator, Executor, operator registry, Celery worker | Example workflow runs end-to-end with fake LLM/Telegram |
+| **3** ✅ | WorkflowSpec + DAG validation, Orchestrator, Executor, operator registry, Celery worker | Example workflow runs end-to-end with fake LLM/Telegram |
 | **4** | Scheduler (cron, retries, reaper, timeouts), events & webhooks | Chaos test: kill worker + flush Redis mid-run → run still completes |
 | **5** | Telegram, OpenAI, Anthropic integrations, notification service | Real alert delivered; LLM token/cost metrics recorded |
 | **6** | structlog, Prometheus, SSE log tail, React dashboard | Grafana board + dashboard screenshots in README |
@@ -540,3 +544,4 @@ process role is just the container command (`nuroflow-api`, `nuroflow-scheduler`
 | [0006](adr/0006-string-enums-and-uuidv7.md) | VARCHAR + CHECK enums and app-generated UUIDv7 keys |
 
 Phase 2 authentication design and its alternatives: [AUTH.md](AUTH.md).
+Phase 3 engine internals, guarantees and alternatives: [ENGINE.md](ENGINE.md).

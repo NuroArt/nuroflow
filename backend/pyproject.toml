@@ -28,6 +28,13 @@ dependencies = [
     "pyjwt>=2.9,<3",
     "redis>=5.2,<7",
     "email-validator>=2.2,<3",
+    # Phase 3: workflow engine, operators, workers
+    "celery[redis]>=5.4,<6",
+    "jinja2>=3.1,<4",
+    "jsonschema>=4.23,<5",
+    "croniter>=5.0,<7",
+    "httpx>=0.27,<1",
+    "pyyaml>=6.0,<7",
 ]
 
 [dependency-groups]
@@ -39,11 +46,15 @@ dev = [
     "pre-commit>=4.0",
     "pytest-asyncio>=0.24",  # Phase 2: async API tests
     "httpx>=0.27",
+    "types-pyyaml>=6.0.12.20261103",
+    "types-jsonschema>=4.26.0.20261006",
+    "types-croniter>=6.2.4.20261006",
 ]
 
 [project.scripts]
 nuroflow-api = "nuroflow.api.server:run"
 nuroflow = "nuroflow.cli:main"
+nuroflow-worker = "nuroflow.workers.cli:run"
 
 [build-system]
 requires = ["hatchling>=1.25"]
@@ -99,6 +110,17 @@ mypy_path = "src"
 packages = ["nuroflow"]
 plugins = ["pydantic.mypy"]
 warn_unreachable = true
+
+# Celery and kombu ship without type hints. Treat them as Any at the boundary and keep
+# strict checking everywhere else.
+[[tool.mypy.overrides]]
+module = ["celery", "celery.*", "kombu", "kombu.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["nuroflow.workers.celery_app", "nuroflow.workers.app_factory"]
+disallow_untyped_decorators = false
+disallow_untyped_calls = false
 
 # --------------------------------------------------------------------------- #
 # pytest

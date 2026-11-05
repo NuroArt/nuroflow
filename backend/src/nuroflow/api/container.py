@@ -19,7 +19,12 @@ from nuroflow.core.config import Settings
 from nuroflow.core.rate_limit import RateLimiter, RedisRateLimiter
 from nuroflow.core.security import ApiKeyCodec, JWTService, PasswordHasher
 from nuroflow.db.session import create_async_db_engine, create_async_session_factory
+from nuroflow.engine.data_store import UnavailableDataStore
+from nuroflow.engine.dispatch import CeleryDispatcher, TaskDispatcher
+from nuroflow.integrations.factory import build_llm_providers, build_telegram_client
+from nuroflow.operators.registry import OperatorRegistry, build_registry
 from nuroflow.services.auth import AuthPolicy
+from nuroflow.workers.app_factory import create_celery_app
 
 
 @dataclass(slots=True)
@@ -34,6 +39,8 @@ class AppContainer:
     jwt: JWTService
     api_key_codec: ApiKeyCodec
     auth_policy: AuthPolicy
+    registry: OperatorRegistry
+    dispatcher: TaskDispatcher
 
     async def aclose(self) -> None:
         await self.redis.aclose()
@@ -45,6 +52,8 @@ def build_container(
     *,
     clock: Clock | None = None,
     rate_limiter: RateLimiter | None = None,
+    dispatcher: TaskDispatcher | None = None,
+    registry: OperatorRegistry | None = None,
 ) -> AppContainer:
     engine = create_async_db_engine(settings)
     redis = Redis.from_url(
@@ -75,4 +84,15 @@ def build_container(
             registration_enabled=settings.registration_enabled,
             password_min_length=settings.password_min_length,
         ),
+        # The API validates and describes operators but never executes them, so
+        # data.store gets a placeholder that refuses to run.
+        registry=registry
+        or build_registry(
+            llm_providers=build_llm_providers(settings),
+            telegram=build_telegram_client(settings),
+            data_store=UnavailableDataStore(),
+            allow_private_networks=settings.http_allow_private_networks,
+        ),
+        # Producer-only Celery app: the API publishes task_run_ids; workers consume them.
+        dispatcher=dispatcher or CeleryDispatcher(create_celery_app(settings)),
     )

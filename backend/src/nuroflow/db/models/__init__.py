@@ -6,6 +6,7 @@ imports it so autogenerate sees the whole schema.
 
 from nuroflow.db.base import Base
 from nuroflow.db.models.connection import Connection
+from nuroflow.db.models.data import DataRecord
 from nuroflow.db.models.event import Event
 from nuroflow.db.models.execution import TaskAttempt, TaskLog, TaskRun, WorkflowRun
 from nuroflow.db.models.identity import ApiKey, RefreshToken, User
@@ -20,6 +21,7 @@ __all__ = [
     "ApiKey",
     "Base",
     "Connection",
+    "DataRecord",
     "Event",
     "NotificationChannel",
     "NotificationDelivery",

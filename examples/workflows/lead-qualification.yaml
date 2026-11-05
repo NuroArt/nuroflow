@@ -13,6 +13,10 @@ tags: [sales, ai, telegram]
 max_active_runs: 20
 timeout_seconds: 600
 
+# Run parameters: defaults that each run can override.
+params:
+  sales_chat_id: "123456789"   # your Telegram chat ID
+
 triggers:
   - type: event
     event_type: lead.captured
@@ -87,4 +91,4 @@ tasks:
 # task is terminal. See docs/ARCHITECTURE.md §5.1.
 notifications:
   - channel: ops-alerts
-    on: [run.failed]
+    events: [run.failed]

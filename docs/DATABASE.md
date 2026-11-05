@@ -1,6 +1,6 @@
 # NuroFlow — Database Design
 
-PostgreSQL 16 · 15 tables · migration `0001_initial_schema` · models in
+PostgreSQL 16 · 16 tables · migrations `0001_initial_schema`, `0002_data_records` · models in
 [`backend/src/nuroflow/db/models/`](../backend/src/nuroflow/db/models/)
 
 ## Conventions
@@ -152,6 +152,12 @@ erDiagram
 | `task_runs` | One task in one run | `uq(workflow_run_id, task_key)`; `0 ≤ attempt_count ≤ max_attempts` |
 | `task_attempts` | One try (error tracking) | `uq(task_run_id, attempt_number)`; `attempt_number ≥ 1` |
 | `task_logs` | Structured operator logs | Append-only; `(task_run_id, id)` index for keyset tailing |
+
+### Data (Phase 3)
+
+| Table | Purpose | Key constraints |
+|---|---|---|
+| `data_records` | JSON documents written by `data.store` tasks | `task_run_id` **unique** → retries upsert instead of duplicating; `(owner_id, collection, id)` index for keyset listing |
 
 ### Notifications
 

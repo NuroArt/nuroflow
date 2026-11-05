@@ -35,6 +35,9 @@ OPENAPI_TAGS = [
     {"name": "auth", "description": "Login, token refresh and session management."},
     {"name": "users", "description": "Administrator user management."},
     {"name": "api-keys", "description": "Machine credentials for integrations and webhooks."},
+    {"name": "workflows", "description": "Workflow definitions, versions and manual runs."},
+    {"name": "runs", "description": "Run history, task attempts, logs and stored records."},
+    {"name": "operators", "description": "Installed task types and their input schemas."},
     {"name": "health", "description": "Liveness and readiness probes."},
 ]
 

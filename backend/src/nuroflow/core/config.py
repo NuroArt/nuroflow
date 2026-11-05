@@ -89,14 +89,29 @@ class Settings(BaseSettings):
     login_max_attempts_per_ip: int = Field(default=50, ge=1)
     login_window_seconds: int = Field(default=300, ge=1)
 
+    # ---- workflow engine (Phase 3) -------------------------------------------- #
+    celery_broker_url: str | None = Field(
+        default=None, description="Defaults to redis_url. Set to use a separate broker DB."
+    )
+    worker_concurrency: int = Field(default=4, ge=1, le=256)
+    worker_queues: Annotated[list[str], NoDecode] = Field(
+        default_factory=lambda: ["default", "ai", "notifications"]
+    )
+    task_output_max_bytes: int = Field(default=256 * 1024, ge=1024, le=10 * 1024 * 1024)
+    task_heartbeat_interval_seconds: float = Field(default=15.0, ge=0)
+    http_allow_private_networks: bool = Field(
+        default=False, description="Allow http.request to reach private IPs (local dev only)."
+    )
+
     # --------------------------------------------------------------------- #
     @model_validator(mode="before")
     @classmethod
-    def _split_cors_origins(cls, data: object) -> object:
+    def _split_comma_lists(cls, data: object) -> object:
         if isinstance(data, dict):
-            raw = data.get("cors_origins")
-            if isinstance(raw, str):
-                data["cors_origins"] = [o.strip() for o in raw.split(",") if o.strip()]
+            for name in ("cors_origins", "worker_queues"):
+                raw = data.get(name)
+                if isinstance(raw, str):
+                    data[name] = [o.strip() for o in raw.split(",") if o.strip()]
         return data
 
     @model_validator(mode="after")
@@ -109,6 +124,10 @@ class Settings(BaseSettings):
             problems.append("NUROFLOW_SECRET_KEY must be set to a random value of 32+ characters")
         if "*" in self.cors_origins:
             problems.append("NUROFLOW_CORS_ORIGINS must not contain '*' when deployed")
+        if self.http_allow_private_networks:
+            problems.append(
+                "NUROFLOW_HTTP_ALLOW_PRIVATE_NETWORKS must be false when deployed (SSRF)"
+            )
         if problems:
             raise ValueError(f"unsafe configuration for {self.environment}: " + "; ".join(problems))
         return self
@@ -127,6 +146,10 @@ class Settings(BaseSettings):
     def sqlalchemy_async_url(self) -> str:
         """psycopg v3 serves sync and async from the same dialect name (ADR-0005)."""
         return self.sqlalchemy_url.replace("postgresql+psycopg://", "postgresql+psycopg_async://")
+
+    @property
+    def broker_url(self) -> str:
+        return self.celery_broker_url or str(self.redis_url)
 
     def derive_key(self, purpose: str) -> bytes:
         """Derive an independent 256-bit key for one purpose from ``secret_key``.
