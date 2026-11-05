@@ -38,6 +38,7 @@ OPENAPI_TAGS = [
     {"name": "workflows", "description": "Workflow definitions, versions and manual runs."},
     {"name": "runs", "description": "Run history, task attempts, logs and stored records."},
     {"name": "operators", "description": "Installed task types and their input schemas."},
+    {"name": "triggers", "description": "Events, signed webhooks and trigger state."},
     {"name": "health", "description": "Liveness and readiness probes."},
 ]
 

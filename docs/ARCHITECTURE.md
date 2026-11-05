@@ -525,7 +525,7 @@ process role is just the container command (`nuroflow-api`, `nuroflow-scheduler`
 | **1** ✅ | Architecture, repo scaffold, full DB schema + initial migration, dev environment | `make up && make migrate` creates schema; upgrade/downgrade round-trips; drift check passes |
 | **2** ✅ | FastAPI app factory, settings, DB sessions, auth (JWT, refresh rotation, API keys, RBAC) | Auth flows covered by tests; OpenAPI published |
 | **3** ✅ | WorkflowSpec + DAG validation, Orchestrator, Executor, operator registry, Celery worker | Example workflow runs end-to-end with fake LLM/Telegram |
-| **4** | Scheduler (cron, retries, reaper, timeouts), events & webhooks | Chaos test: kill worker + flush Redis mid-run → run still completes |
+| **4** ✅ | Scheduler (cron, retries, reaper, timeouts), events & webhooks | Chaos test: kill worker + flush Redis mid-run → run still completes |
 | **5** | Telegram, OpenAI, Anthropic integrations, notification service | Real alert delivered; LLM token/cost metrics recorded |
 | **6** | structlog, Prometheus, SSE log tail, React dashboard | Grafana board + dashboard screenshots in README |
 | **7** | Production Dockerfiles, Compose stack, hardening, GitHub Actions CI/CD, coverage ≥ 85% | Green CI badge; `docker compose up` brings up the full platform |
@@ -545,3 +545,4 @@ process role is just the container command (`nuroflow-api`, `nuroflow-scheduler`
 
 Phase 2 authentication design and its alternatives: [AUTH.md](AUTH.md).
 Phase 3 engine internals, guarantees and alternatives: [ENGINE.md](ENGINE.md).
+Phase 4 scheduler, triggers, backpressure and chaos results: [SCHEDULER.md](SCHEDULER.md).

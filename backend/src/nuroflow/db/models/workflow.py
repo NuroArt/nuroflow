@@ -123,6 +123,9 @@ class WorkflowTrigger(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             "next_fire_at",
             postgresql_where=sa.text("is_enabled AND type = 'cron'"),
         ),
+        # One row per trigger identity per workflow: versions update triggers in place,
+        # so a webhook keeps its secret and a cron keeps its position in time.
+        sa.UniqueConstraint("workflow_id", "spec_key"),
         # Event fan-out hot path: "which enabled triggers listen to this event type?"
         sa.Index(
             "ix_workflow_triggers_event_type_enabled",
@@ -135,6 +138,7 @@ class WorkflowTrigger(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         sa.ForeignKey("workflows.id", ondelete="CASCADE"), index=True
     )
     type: Mapped[TriggerType] = mapped_column(str_enum(TriggerType, name="type"))
+    spec_key: Mapped[str] = mapped_column(sa.String(300))
     name: Mapped[str | None] = mapped_column(sa.String(100))
     is_enabled: Mapped[bool] = mapped_column(server_default=sa.true())
 

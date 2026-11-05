@@ -141,7 +141,7 @@ def test_live_duplicate_slug_rejected(session: Session, workflow: Workflow) -> N
 def test_cron_trigger_requires_expression(session: Session, workflow: Workflow) -> None:
     _assert_rejected(
         session,
-        WorkflowTrigger(workflow_id=workflow.id, type=TriggerType.CRON),
+        WorkflowTrigger(workflow_id=workflow.id, type=TriggerType.CRON, spec_key="cron:x"),
         "cron_requires_expression",
     )
 

@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from nuroflow.core.clock import Clock, SystemClock
 from nuroflow.core.config import Settings
+from nuroflow.core.crypto import SecretBox
 from nuroflow.core.rate_limit import RateLimiter, RedisRateLimiter
 from nuroflow.core.security import ApiKeyCodec, JWTService, PasswordHasher
 from nuroflow.db.session import create_async_db_engine, create_async_session_factory
@@ -41,6 +42,7 @@ class AppContainer:
     auth_policy: AuthPolicy
     registry: OperatorRegistry
     dispatcher: TaskDispatcher
+    secrets: SecretBox
 
     async def aclose(self) -> None:
         await self.redis.aclose()
@@ -95,4 +97,5 @@ def build_container(
         ),
         # Producer-only Celery app: the API publishes task_run_ids; workers consume them.
         dispatcher=dispatcher or CeleryDispatcher(create_celery_app(settings)),
+        secrets=SecretBox.from_settings(settings),
     )

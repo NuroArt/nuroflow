@@ -5,13 +5,16 @@ from __future__ import annotations
 import uuid
 from collections.abc import Sequence
 from datetime import datetime
+from typing import Any
 
 import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from nuroflow.db.models import (
     ApiKey,
     DataRecord,
+    Event,
     RefreshToken,
     TaskAttempt,
     TaskLog,
@@ -19,9 +22,10 @@ from nuroflow.db.models import (
     User,
     Workflow,
     WorkflowRun,
+    WorkflowTrigger,
     WorkflowVersion,
 )
-from nuroflow.domain.enums import RunStatus, TaskStatus
+from nuroflow.domain.enums import RunStatus, TaskStatus, TriggerType
 
 
 class SqlAlchemyUserRepository:
@@ -165,6 +169,52 @@ class SqlAlchemyWorkflowRepository:
         )
         return int((await self._s.execute(stmt)).scalar_one())
 
+    async def list_triggers(self, workflow_id: uuid.UUID) -> Sequence[WorkflowTrigger]:
+        stmt = (
+            sa.select(WorkflowTrigger)
+            .where(WorkflowTrigger.workflow_id == workflow_id)
+            .order_by(WorkflowTrigger.id)
+        )
+        return (await self._s.scalars(stmt)).all()
+
+    async def add_trigger(self, trigger: WorkflowTrigger) -> None:
+        self._s.add(trigger)
+        await self._s.flush()
+
+    async def delete_trigger(self, trigger: WorkflowTrigger) -> None:
+        await self._s.delete(trigger)
+        await self._s.flush()
+
+    async def get_trigger(self, trigger_id: uuid.UUID) -> WorkflowTrigger | None:
+        return await self._s.get(WorkflowTrigger, trigger_id)
+
+    async def matching_event_triggers(
+        self, *, owner_id: uuid.UUID, event_type: str, payload: dict[str, Any]
+    ) -> Sequence[WorkflowTrigger]:
+        """Enabled event triggers of live, unpaused workflows whose filter matches.
+
+        Matching happens in Postgres: ``payload @> event_filter`` is JSONB containment,
+        so ``{"source": "website"}`` matches any payload that has that key and value.
+        """
+        stmt = (
+            sa.select(WorkflowTrigger)
+            .join(Workflow, Workflow.id == WorkflowTrigger.workflow_id)
+            .where(
+                Workflow.owner_id == owner_id,
+                Workflow.is_paused.is_(False),
+                Workflow.deleted_at.is_(None),
+                WorkflowTrigger.type == TriggerType.EVENT,
+                WorkflowTrigger.is_enabled.is_(True),
+                WorkflowTrigger.event_type == event_type,
+                sa.or_(
+                    WorkflowTrigger.event_filter.is_(None),
+                    sa.cast(payload, JSONB).op("@>")(WorkflowTrigger.event_filter),
+                ),
+            )
+            .order_by(WorkflowTrigger.workflow_id)  # stable lock order across concurrent events
+        )
+        return (await self._s.scalars(stmt)).all()
+
 
 _OPEN_TASK_STATUSES = (TaskStatus.PENDING, TaskStatus.QUEUED, TaskStatus.UP_FOR_RETRY)
 
@@ -187,11 +237,12 @@ class SqlAlchemyRunRepository:
         stmt = sa.select(WorkflowRun).where(WorkflowRun.idempotency_key == key)
         return (await self._s.scalars(stmt)).one_or_none()
 
-    async def count_active(self, workflow_id: uuid.UUID) -> int:
-        # Served by the partial index ix_workflow_runs_active.
+    async def count_admitted_active(self, workflow_id: uuid.UUID) -> int:
+        # Served by the partial index ix_workflow_runs_active. Waiting runs don't count.
         stmt = sa.select(sa.func.count()).where(
             WorkflowRun.workflow_id == workflow_id,
             WorkflowRun.status.in_((RunStatus.PENDING, RunStatus.RUNNING)),
+            WorkflowRun.admitted_at.is_not(None),
         )
         return int((await self._s.execute(stmt)).scalar_one())
 
@@ -264,6 +315,25 @@ class SqlAlchemyRunRepository:
         return (await self._s.scalars(stmt)).all()
 
 
+class SqlAlchemyEventRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._s = session
+
+    async def add(self, event: Event) -> None:
+        self._s.add(event)
+        await self._s.flush()
+
+    async def get_by_idempotency_key(self, owner_id: uuid.UUID, key: str) -> Event | None:
+        stmt = sa.select(Event).where(Event.owner_id == owner_id, Event.idempotency_key == key)
+        return (await self._s.scalars(stmt)).one_or_none()
+
+    async def runs_for_event(self, event_id: uuid.UUID) -> Sequence[WorkflowRun]:
+        stmt = (
+            sa.select(WorkflowRun).where(WorkflowRun.event_id == event_id).order_by(WorkflowRun.id)
+        )
+        return (await self._s.scalars(stmt)).all()
+
+
 class SqlAlchemyUnitOfWork:
     """Wraps one ``AsyncSession``. The session's lifetime is owned by the caller."""
 
@@ -274,6 +344,7 @@ class SqlAlchemyUnitOfWork:
         self.api_keys = SqlAlchemyApiKeyRepository(session)
         self.workflows = SqlAlchemyWorkflowRepository(session)
         self.runs = SqlAlchemyRunRepository(session)
+        self.events = SqlAlchemyEventRepository(session)
 
     async def commit(self) -> None:
         await self.session.commit()

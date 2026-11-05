@@ -81,6 +81,9 @@ class ResolvedTask(_Model):
 
 
 class CronTriggerSpec(_Model):
+    """Identity (``spec_key``) is the schedule itself. Changing ``catchup`` keeps the
+    trigger's position in time; changing the expression starts a new trigger."""
+
     type: Literal["cron"]
     cron: str = Field(max_length=100, examples=["*/15 * * * *"])
     timezone: str = "UTC"
@@ -102,16 +105,31 @@ class CronTriggerSpec(_Model):
             raise ValueError(f"unknown IANA timezone: {value!r}") from exc
         return value
 
+    @property
+    def spec_key(self) -> str:
+        return f"cron:{self.cron}:{self.timezone}"
+
 
 class EventTriggerSpec(_Model):
     type: Literal["event"]
     event_type: str = Field(pattern=r"^[a-z0-9][a-z0-9_.-]{0,199}$", examples=["lead.captured"])
     event_filter: dict[str, Any] | None = None
 
+    @property
+    def spec_key(self) -> str:
+        canonical = json.dumps(self.event_filter, sort_keys=True, separators=(",", ":"))
+        return f"event:{self.event_type}:{hashlib.sha256(canonical.encode()).hexdigest()[:16]}"
+
 
 class WebhookTriggerSpec(_Model):
+    """Identity is the name, so a webhook keeps its URL and secret across versions."""
+
     type: Literal["webhook"]
-    name: str | None = Field(default=None, max_length=100)
+    name: str = Field(default="default", pattern=r"^[a-z0-9][a-z0-9_-]{0,63}$")
+
+    @property
+    def spec_key(self) -> str:
+        return f"webhook:{self.name}"
 
 
 TriggerSpec = Annotated[
@@ -147,6 +165,9 @@ class WorkflowSpec(_Model):
             raise ValueError(str(exc)) from exc
 
         problems: list[str] = []
+        keys = [t.spec_key for t in self.triggers]
+        if duplicates := sorted({k for k in keys if keys.count(k) > 1}):
+            problems.append(f"duplicate triggers: {', '.join(duplicates)}")
         for task in self.tasks:
             refs, issues = analyse(task.inputs, path=f"tasks.{task.key}.inputs")
             problems += [f"{i.path}: {i.message}" for i in issues]

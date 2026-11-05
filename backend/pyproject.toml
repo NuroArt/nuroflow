@@ -35,6 +35,8 @@ dependencies = [
     "croniter>=5.0,<7",
     "httpx>=0.27,<1",
     "pyyaml>=6.0,<7",
+    # Phase 4: scheduler, webhooks (secret encryption)
+    "cryptography>=43,<47",
 ]
 
 [dependency-groups]
@@ -55,6 +57,7 @@ dev = [
 nuroflow-api = "nuroflow.api.server:run"
 nuroflow = "nuroflow.cli:main"
 nuroflow-worker = "nuroflow.workers.cli:run"
+nuroflow-scheduler = "nuroflow.scheduler.cli:run"
 
 [build-system]
 requires = ["hatchling>=1.25"]

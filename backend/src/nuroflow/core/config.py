@@ -103,16 +103,42 @@ class Settings(BaseSettings):
         default=False, description="Allow http.request to reach private IPs (local dev only)."
     )
 
+    # ---- scheduler, events & webhooks (Phase 4) -------------------------------- #
+    public_base_url: str = Field(
+        default="http://localhost:8000", description="Used to build webhook URLs shown to users"
+    )
+    scheduler_tick_seconds: float = Field(default=2.0, gt=0, le=60)
+    scheduler_batch_size: int = Field(default=100, ge=1, le=10_000)
+    cron_max_catchup_runs: int = Field(default=50, ge=1, le=10_000)
+    reaper_queued_timeout_seconds: int = Field(default=600, ge=10)
+    reaper_heartbeat_timeout_seconds: int = Field(default=90, ge=5)
+    webhook_tolerance_seconds: int = Field(default=300, ge=30, le=3600)
+    event_rate_limit_per_minute: int = Field(default=600, ge=1)
+    webhook_rate_limit_per_minute: int = Field(default=120, ge=1)
+    # Fernet keys, newest first. Empty → one key derived from secret_key. Listing an old
+    # key after a new one lets you rotate without breaking existing ciphertexts.
+    encryption_keys: Annotated[list[SecretStr], NoDecode] = Field(default_factory=list)
+
     # --------------------------------------------------------------------- #
     @model_validator(mode="before")
     @classmethod
     def _split_comma_lists(cls, data: object) -> object:
         if isinstance(data, dict):
-            for name in ("cors_origins", "worker_queues"):
+            for name in ("cors_origins", "worker_queues", "encryption_keys"):
                 raw = data.get(name)
                 if isinstance(raw, str):
                     data[name] = [o.strip() for o in raw.split(",") if o.strip()]
         return data
+
+    @model_validator(mode="after")
+    def _heartbeat_outlives_reaper_threshold(self) -> Self:
+        hb = self.task_heartbeat_interval_seconds
+        if hb > 0 and self.reaper_heartbeat_timeout_seconds < 3 * hb:
+            raise ValueError(
+                "reaper_heartbeat_timeout_seconds must be at least 3x "
+                "task_heartbeat_interval_seconds, or healthy tasks get reaped"
+            )
+        return self
 
     @model_validator(mode="after")
     def _reject_unsafe_defaults_when_deployed(self) -> Self:

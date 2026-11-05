@@ -36,7 +36,9 @@ class Orchestrator:
 
     def advance(self, store: EngineStore, run_id: uuid.UUID) -> list[EnqueueRequest]:
         run = store.lock_run(run_id)
-        if run.status.is_terminal:
+        if (
+            run.status.is_terminal or run.admitted_at is None
+        ):  # waiting runs only start via admission
             return []
         spec = store.spec(run.workflow_version_id)
         tasks = {t.task_key: t for t in store.task_runs(run_id)}

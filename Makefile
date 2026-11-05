@@ -5,7 +5,7 @@ COMPOSE_DEV  := docker compose -f docker-compose.dev.yml
 BACKEND      := cd backend &&
 RUN          := $(BACKEND) uv run
 
-.PHONY: help install up down nuke logs migrate migration downgrade sql db-shell api worker admin \
+.PHONY: help install up down nuke logs migrate migration downgrade sql db-shell api worker scheduler admin \
         test test-unit test-integration lint format typecheck check
 
 help: ## Show this help
@@ -54,6 +54,9 @@ api: ## Run the API with auto-reload on http://127.0.0.1:8000 (docs at /docs)
 
 worker: ## Run a Celery worker on all queues (default, ai, notifications)
 	$(RUN) nuroflow-worker
+
+scheduler: ## Run the scheduler (cron, retries, reaper, timeouts, admission)
+	$(RUN) nuroflow-scheduler
 
 admin: ## Create or promote an admin: make admin email=you@example.com
 	@test -n "$(email)" || (echo 'usage: make admin email=you@example.com' && exit 1)

@@ -19,7 +19,7 @@ make migrate     # creates all 16 tables
 make check       # lint + mypy strict + tests + migration drift check
 ```
 
-Expected result: `224 passed`, coverage ~94%, `No new upgrade operations detected.`
+Expected result: `267 passed`, coverage ~93%, `No new upgrade operations detected.`
 
 ## Run the API
 
@@ -35,6 +35,7 @@ or an API key in the `X-API-Key` field. See [AUTH.md](AUTH.md) for every flow.
 
 ```bash
 make worker                        # second terminal: consumes default, ai, notifications
+make scheduler                     # third terminal: cron, retries, reaper, timeouts
 ```
 
 Import `examples/workflows/lead-qualification.yaml` with `POST /api/v1/workflows:import` and

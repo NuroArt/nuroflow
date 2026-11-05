@@ -16,12 +16,11 @@ from nuroflow.core.exceptions import Conflict, NotFound, PermissionDenied
 from nuroflow.db.models import DataRecord, TaskAttempt, TaskLog, TaskRun, Workflow, WorkflowRun
 from nuroflow.domain.auth import Principal, Scope
 from nuroflow.domain.enums import RunStatus, RunTriggerType
-from nuroflow.domain.workflow_spec import WorkflowSpec
 from nuroflow.engine.dispatch import TaskDispatcher
-from nuroflow.engine.planner import RunTrigger, plan_run
-from nuroflow.engine.store import SPEC_CACHE
+from nuroflow.engine.planner import RunTrigger
 from nuroflow.operators.registry import OperatorRegistry
 from nuroflow.repositories.interfaces import WorkflowUnitOfWork
+from nuroflow.services.launcher import RunLauncher
 
 logger = logging.getLogger(__name__)
 
@@ -55,38 +54,28 @@ class RunService:
         payload: dict[str, Any],
         idempotency_key: str | None = None,
     ) -> TriggeredRun:
+        """Start a run now. Unlike automated triggers, a full workflow returns 409:
+        a human is waiting for an answer, so a silent queue would be confusing."""
         self._require(principal, Scope.RUNS_WRITE)
-        workflow = await self._owned_workflow(principal, workflow_id)
-        key = f"manual:{workflow.id}:{idempotency_key}" if idempotency_key else None
+        await self._owned_workflow(principal, workflow_id)
+        key = f"manual:{workflow_id}:{idempotency_key}" if idempotency_key else None
         if key and (existing := await self._uow.runs.get_by_idempotency_key(key)):
             return TriggeredRun(existing, created=False)
+
+        # Lock the workflow row: serialises the active-run count with other launches.
+        workflow = await self._uow.workflows.get(workflow_id, lock=True)
+        assert workflow is not None
         if workflow.is_paused:
             raise Conflict("Workflow is paused; unpause it to start runs")
-        if workflow.current_version_id is None:
-            raise Conflict("Workflow has no version to run")
-
-        spec = await self._spec(workflow.current_version_id)
-        if await self._uow.runs.count_active(workflow.id) >= spec.max_active_runs:
-            raise Conflict(
-                f"max_active_runs ({spec.max_active_runs}) reached; wait for a run to finish"
-            )
-
-        run, requests = plan_run(
-            workflow_id=workflow.id,
-            version_id=workflow.current_version_id,
-            spec=spec,
-            trigger=RunTrigger(
-                type=RunTriggerType.MANUAL,
-                payload=payload,
-                triggered_by_id=principal.user_id,
-                idempotency_key=key,
-            ),
-            params=params,
-            queue_for=lambda name: self._registry.get(name).default_queue,
-            now=self._clock.now(),
+        launcher = RunLauncher(self._uow, registry=self._registry, clock=self._clock)
+        trigger = RunTrigger(
+            type=RunTriggerType.MANUAL,
+            payload=payload,
+            triggered_by_id=principal.user_id,
+            idempotency_key=key,
         )
         try:
-            await self._uow.runs.add(run)
+            launch = await launcher.launch(workflow, trigger, params=params, reject_when_full=True)
             await self._uow.commit()
         except IntegrityError:
             # Lost a race with a concurrent request carrying the same Idempotency-Key.
@@ -94,11 +83,13 @@ class RunService:
             if key and (existing := await self._uow.runs.get_by_idempotency_key(key)):
                 return TriggeredRun(existing, created=False)
             raise
-        logger.info("run created", extra={"run_id": str(run.id), "workflow_id": str(workflow.id)})
+        logger.info(
+            "run created", extra={"run_id": str(launch.run.id), "workflow_id": str(workflow.id)}
+        )
         # Dispatch only after commit. The broker client does blocking I/O, so it runs
         # in a worker thread instead of on the event loop.
-        await asyncio.to_thread(self._dispatcher.enqueue, requests)
-        return TriggeredRun(run, created=True)
+        await asyncio.to_thread(self._dispatcher.enqueue, launch.requests)
+        return TriggeredRun(launch.run, created=True)
 
     async def get(
         self, principal: Principal, run_id: uuid.UUID
@@ -160,16 +151,6 @@ class RunService:
         )
 
     # ------------------------------------------------------------------ #
-    async def _spec(self, version_id: uuid.UUID) -> WorkflowSpec:
-        if (cached := SPEC_CACHE.get(version_id)) is not None:
-            return cached
-        version = await self._uow.workflows.get_version(version_id)
-        if version is None:
-            raise NotFound("Workflow version not found")
-        spec = WorkflowSpec.model_validate(version.definition)
-        SPEC_CACHE.put(version_id, spec)
-        return spec
-
     async def _owned_workflow(
         self, principal: Principal, workflow_id: uuid.UUID, *, include_deleted: bool = False
     ) -> Workflow:

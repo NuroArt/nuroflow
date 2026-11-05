@@ -32,11 +32,20 @@ class WorkflowRun(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             "status",
             postgresql_where=sa.text("status IN ('pending', 'running')"),
         ),
+        # Admission queue: runs created by automation that wait for a free slot.
+        sa.Index(
+            "ix_workflow_runs_waiting",
+            "workflow_id",
+            "id",
+            postgresql_where=sa.text("status = 'pending' AND admitted_at IS NULL"),
+        ),
         # Scheduler timeout sweep.
         sa.Index(
-            "ix_workflow_runs_deadline_running",
+            "ix_workflow_runs_deadline_active",
             "deadline_at",
-            postgresql_where=sa.text("status = 'running' AND deadline_at IS NOT NULL"),
+            postgresql_where=sa.text(
+                "status IN ('pending', 'running') AND deadline_at IS NOT NULL"
+            ),
         ),
         sa.CheckConstraint(
             "finished_at IS NULL OR started_at IS NULL OR finished_at >= started_at",
@@ -71,6 +80,8 @@ class WorkflowRun(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     # client-supplied Idempotency-Key for manual runs.
     idempotency_key: Mapped[str | None] = mapped_column(sa.String(255), unique=True)
     scheduled_for: Mapped[datetime | None]
+    # NULL while the run waits for a max_active_runs slot (backpressure, not rejection).
+    admitted_at: Mapped[datetime | None]
     started_at: Mapped[datetime | None]
     finished_at: Mapped[datetime | None]
     deadline_at: Mapped[datetime | None]
@@ -98,6 +109,12 @@ class TaskRun(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             "ix_task_runs_retry_due",
             "next_attempt_at",
             postgresql_where=sa.text("status = 'up_for_retry'"),
+        ),
+        # Reaper: queued tasks whose message may have been lost.
+        sa.Index(
+            "ix_task_runs_queued_since",
+            "queued_at",
+            postgresql_where=sa.text("status = 'queued'"),
         ),
         # Reaper: in-flight tasks whose heartbeat went stale.
         sa.Index(

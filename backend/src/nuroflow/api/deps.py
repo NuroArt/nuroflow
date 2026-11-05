@@ -24,6 +24,7 @@ from nuroflow.domain.auth import Principal, Scope
 from nuroflow.repositories.sqlalchemy import SqlAlchemyUnitOfWork
 from nuroflow.services.api_keys import ApiKeyService
 from nuroflow.services.auth import AuthService, ClientInfo
+from nuroflow.services.ingest import IngestService
 from nuroflow.services.runs import RunService
 from nuroflow.services.users import UserService
 from nuroflow.services.workflows import WorkflowService
@@ -75,7 +76,20 @@ def get_user_service(uow: UoW, container: Container) -> UserService:
 
 
 def get_workflow_service(uow: UoW, container: Container) -> WorkflowService:
-    return WorkflowService(uow, registry=container.registry, clock=container.clock)
+    return WorkflowService(
+        uow, registry=container.registry, clock=container.clock, secrets=container.secrets
+    )
+
+
+def get_ingest_service(uow: UoW, container: Container) -> IngestService:
+    return IngestService(
+        uow,
+        registry=container.registry,
+        dispatcher=container.dispatcher,
+        clock=container.clock,
+        secrets=container.secrets,
+        webhook_tolerance_seconds=container.settings.webhook_tolerance_seconds,
+    )
 
 
 def get_run_service(uow: UoW, container: Container) -> RunService:
@@ -87,6 +101,7 @@ def get_run_service(uow: UoW, container: Container) -> RunService:
 AuthServiceDep = Annotated[AuthService, Depends(get_auth_service)]
 WorkflowServiceDep = Annotated[WorkflowService, Depends(get_workflow_service)]
 RunServiceDep = Annotated[RunService, Depends(get_run_service)]
+IngestServiceDep = Annotated[IngestService, Depends(get_ingest_service)]
 ApiKeyServiceDep = Annotated[ApiKeyService, Depends(get_api_key_service)]
 UserServiceDep = Annotated[UserService, Depends(get_user_service)]
 

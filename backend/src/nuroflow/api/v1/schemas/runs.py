@@ -25,6 +25,9 @@ class RunRead(Schema):
     trigger_type: RunTriggerType
     params: dict[str, Any]
     scheduled_for: datetime | None
+    admitted_at: datetime | None = Field(
+        description="null while the run waits for a max_active_runs slot"
+    )
     created_at: datetime
     started_at: datetime | None
     finished_at: datetime | None

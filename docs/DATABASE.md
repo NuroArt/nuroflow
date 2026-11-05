@@ -1,6 +1,6 @@
 # NuroFlow — Database Design
 
-PostgreSQL 16 · 16 tables · migrations `0001_initial_schema`, `0002_data_records` · models in
+PostgreSQL 16 · 16 tables · migrations `0001_initial_schema`, `0002_data_records`, `0003_scheduler_and_admission` · models in
 [`backend/src/nuroflow/db/models/`](../backend/src/nuroflow/db/models/)
 
 ## Conventions
@@ -177,7 +177,10 @@ Every non-FK index exists for a specific query. If a query changes, revisit its 
 | `ix_workflow_triggers_event_type_enabled` (partial) | Event fan-out: `WHERE event_type = :type` |
 | `ix_workflow_runs_workflow_id_created_at` (`created_at DESC`) | Run history pages per workflow |
 | `ix_workflow_runs_active` (partial: pending/running) | `max_active_runs` enforcement, "running now" widget |
-| `ix_workflow_runs_deadline_running` (partial) | Scheduler run-timeout sweep |
+| `ix_workflow_runs_deadline_active` (partial: pending/running) | Scheduler run-timeout sweep |
+| `ix_workflow_runs_waiting` (partial: pending ∧ not admitted) | Admission queue, oldest first |
+| `ix_task_runs_queued_since` (partial: queued) | Reaper: lost messages |
+| `uq_workflow_triggers_workflow_id_spec_key` | Trigger identity across versions |
 | `ix_task_runs_retry_due` (partial: up_for_retry) | Scheduler retry dispatch |
 | `ix_task_runs_in_flight_heartbeat` (partial: queued/running) | Reaper: stale heartbeats / lost messages |
 | `ix_task_logs_task_run_id_id` | `WHERE task_run_id = :id AND id > :cursor ORDER BY id LIMIT n` |

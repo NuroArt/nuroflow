@@ -1,1 +1,1 @@
-"""DB-driven scheduler: cron firing, retry dispatch, reaper, run timeouts (Phase 4)."""
+"""DB-driven scheduler: cron firing, admission, retry dispatch, reaper, run timeouts (ADR-0002)."""

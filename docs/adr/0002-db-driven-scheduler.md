@@ -37,3 +37,14 @@ The same loop also dispatches due retries, reaps stale tasks and enforces run ti
 - ✅ Multiple scheduler replicas can run safely (HA) with no leader election.
 - ✅ Schedule changes take effect on the next tick (≤ 5s).
 - ⚠️ We own about 300 lines of scheduling code, so it needs thorough tests (DST transitions, catchup, races).
+
+## Addendum (Phase 4 implementation)
+
+- **Sync loop, not asyncio.** The jobs are sequential short transactions with nothing to
+  overlap, so an event loop added complexity with no throughput gain.
+- **Lock ordering refined.** Locking `workflow_triggers` directly (as sketched above) would
+  invert the order used when saving a version (workflow → trigger) and could deadlock. Due
+  triggers are now found with an unlocked read, then locked as workflow → trigger, each
+  with `SKIP LOCKED`, and re-checked. See SCHEDULER.md for the global lock order.
+- **Admission control** was added: automated runs over `max_active_runs` wait instead of
+  being rejected.

@@ -16,7 +16,12 @@ lead.captured ─▶ AI qualify ─▶ store ─▶ AI summary ─▶ Telegram a
 - **Crash-safe by design.** PostgreSQL is the source of truth, and Celery only carries IDs. Kill
   a worker or flush Redis mid-run, and the run still completes. ([ADR-0001](docs/adr/0001-postgres-as-source-of-truth.md))
 - **HA scheduler with no leader election.** `FOR UPDATE SKIP LOCKED` plus idempotency keys
-  mean each cron trigger fires exactly once across N replicas. ([ADR-0002](docs/adr/0002-db-driven-scheduler.md))
+  mean each cron trigger fires exactly once across N replicas. It's DST-correct and does
+  backpressure instead of dropping work. ([SCHEDULER.md](docs/SCHEDULER.md))
+- **Chaos-tested recovery.** Kill a worker mid-task or flush Redis, and the run still
+  completes. Proven in CI, not promised.
+- **Events and signed webhooks.** JSONB-filtered fan-out, idempotent ingestion,
+  HMAC-SHA256 with replay protection, and encrypted, rotatable secrets.
 - **Durable retries.** Exponential backoff with jitter, visible per attempt, and they survive
   restarts. ([ADR-0003](docs/adr/0003-engine-managed-retries.md))
 - **Safe by default.** Workflows are validated data, not user code, and templates run in Jinja's
@@ -44,7 +49,7 @@ flowchart LR
     W --> X[OpenAI · Anthropic · Telegram · HTTP]
 ```
 
-Full design: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** · Schema: **[docs/DATABASE.md](docs/DATABASE.md)** · Auth: **[docs/AUTH.md](docs/AUTH.md)** · Engine: **[docs/ENGINE.md](docs/ENGINE.md)** · Decisions: **[docs/adr/](docs/adr/)**
+Full design: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** · Schema: **[docs/DATABASE.md](docs/DATABASE.md)** · Auth: **[docs/AUTH.md](docs/AUTH.md)** · Engine: **[docs/ENGINE.md](docs/ENGINE.md)** · Scheduler: **[docs/SCHEDULER.md](docs/SCHEDULER.md)** · Decisions: **[docs/adr/](docs/adr/)**
 
 ## Quick start
 
@@ -53,6 +58,7 @@ make install && make up && make migrate && make check
 make admin email=you@example.com   # first admin (prompts for a password)
 make api                           # terminal 1 → http://127.0.0.1:8000/docs
 make worker                        # terminal 2 → executes tasks
+make scheduler                     # terminal 3 → cron, retries, recovery
 ```
 
 Then import and run the reference workflow: see [docs/ENGINE.md](docs/ENGINE.md#running-it).
@@ -71,8 +77,8 @@ OpenAI · Anthropic · Telegram Bot API · React + Tailwind · Docker · GitHub 
 | 1 | Architecture, repo scaffold, full schema + migration, dev environment | ✅ Done |
 | 2 | FastAPI foundation, settings, DB sessions, JWT auth, API keys, RBAC | ✅ Done |
 | 3 | WorkflowSpec + DAG validation, orchestrator, executor, operators, Celery | ✅ Done |
-| 4 | Scheduler: cron, retries, reaper, timeouts, events & webhooks | ⏳ Next |
-| 5 | Telegram, OpenAI, Anthropic, notification service | ⬜ |
+| 4 | Scheduler: cron, retries, reaper, timeouts, events & webhooks | ✅ Done |
+| 5 | Telegram, OpenAI, Anthropic, notification service | ⏳ Next |
 | 6 | Logging, metrics, SSE log tail, React dashboard | ⬜ |
 | 7 | Production Docker, hardening, CI/CD, test suite ≥ 85% | ⬜ |
 
