@@ -19,7 +19,17 @@ make migrate     # creates all 15 tables
 make check       # lint + mypy strict + tests + migration drift check
 ```
 
-Expected result: `28 passed`, coverage ~98%, `No new upgrade operations detected.`
+Expected result: `124 passed`, coverage ~96%, `No new upgrade operations detected.`
+
+## Run the API
+
+```bash
+make admin email=you@example.com   # once: creates the first admin (prompts for a password)
+make api                           # http://127.0.0.1:8000/docs (auto-reload)
+```
+
+In Swagger UI click **Authorize** and paste an access token from `POST /api/v1/auth/login`,
+or an API key in the `X-API-Key` field. See [AUTH.md](AUTH.md) for every flow.
 
 ## Daily loop
 
@@ -60,6 +70,6 @@ make sql                                        # print the full migration SQL
 | Symptom | Fix |
 |---|---|
 | `port 5432 already allocated` | A local Postgres is running. Stop it, or change the host port in `docker-compose.dev.yml` and `NUROFLOW_DATABASE_URL` |
-| Integration tests skipped | `make up`, then check `NUROFLOW_DATABASE_URL` in `backend/.env` |
+| Integration tests skipped | `make up`, then check `NUROFLOW_DATABASE_URL` in `backend/.env` and that Redis answers on `localhost:6379` (tests use DB 15) |
 | `permission denied to create database` | The DB user needs `CREATEDB` (the dev compose user is a superuser) |
 | Alembic runs but no tables appear | You're on an old `env.py`. See the `connection.commit()` note there (SQLAlchemy 2.0 autobegin) |

@@ -5,7 +5,7 @@ COMPOSE_DEV  := docker compose -f docker-compose.dev.yml
 BACKEND      := cd backend &&
 RUN          := $(BACKEND) uv run
 
-.PHONY: help install up down nuke logs migrate migration downgrade sql db-shell \
+.PHONY: help install up down nuke logs migrate migration downgrade sql db-shell api admin \
         test test-unit test-integration lint format typecheck check
 
 help: ## Show this help
@@ -47,6 +47,14 @@ downgrade: ## Roll back one migration
 
 sql: ## Print the SQL for all migrations (offline mode) for review
 	$(RUN) alembic upgrade head --sql
+
+# ---- run ------------------------------------------------------------------- #
+api: ## Run the API with auto-reload on http://127.0.0.1:8000 (docs at /docs)
+	$(RUN) nuroflow-api --reload
+
+admin: ## Create or promote an admin: make admin email=you@example.com
+	@test -n "$(email)" || (echo 'usage: make admin email=you@example.com' && exit 1)
+	$(RUN) nuroflow create-admin --email "$(email)"
 
 # ---- quality ---------------------------------------------------------------- #
 test: ## Run all tests with coverage (integration tests need `make up`)

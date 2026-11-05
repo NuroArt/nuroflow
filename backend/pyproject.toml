@@ -13,14 +13,21 @@ classifiers = [
     "Typing :: Typed",
 ]
 
-# Phase 1 runtime dependencies. Each later phase appends its own block, so the
-# history shows *why* every dependency exists.
+# Each phase appends its own block, so the history shows *why* every dependency exists.
 dependencies = [
+    # Phase 1: data layer + configuration
     "sqlalchemy>=2.0.36,<2.1",
     "psycopg[binary]>=3.2,<4",
     "alembic>=1.14,<2",
     "pydantic>=2.9,<3",
     "pydantic-settings>=2.6,<3",
+    # Phase 2: API, authentication, rate limiting
+    "fastapi>=0.115,<1",
+    "uvicorn[standard]>=0.32,<1",
+    "argon2-cffi>=23.1,<26",
+    "pyjwt>=2.9,<3",
+    "redis>=5.2,<7",
+    "email-validator>=2.2,<3",
 ]
 
 [dependency-groups]
@@ -30,7 +37,13 @@ dev = [
     "ruff>=0.8",
     "mypy>=1.13",
     "pre-commit>=4.0",
+    "pytest-asyncio>=0.24",  # Phase 2: async API tests
+    "httpx>=0.27",
 ]
+
+[project.scripts]
+nuroflow-api = "nuroflow.api.server:run"
+nuroflow = "nuroflow.cli:main"
 
 [build-system]
 requires = ["hatchling>=1.25"]
@@ -61,11 +74,17 @@ select = [
     "PT",            # pytest style
     "TID",           # tidy imports
 ]
-ignore = ["S101"]    # assert is fine in tests (re-enabled for src below)
+ignore = [
+    "S101",  # asserts are used for type narrowing
+    "N818",  # domain-language exception names (NotFound, Conflict) read better than *Error
+]
 
 [tool.ruff.lint.per-file-ignores]
 "alembic/versions/*.py" = ["E501"]
 "tests/**/*.py" = ["S", "DTZ"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["nuroflow", "tests"]
 
 [tool.ruff.lint.flake8-tidy-imports]
 ban-relative-imports = "all"
@@ -86,7 +105,11 @@ warn_unreachable = true
 # --------------------------------------------------------------------------- #
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 addopts = "-ra --strict-markers --strict-config"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+asyncio_default_test_loop_scope = "session"
 markers = [
     "integration: requires a running PostgreSQL (set NUROFLOW_DATABASE_URL)",
 ]
@@ -95,6 +118,9 @@ filterwarnings = ["error"]
 [tool.coverage.run]
 source = ["nuroflow"]
 branch = true
+# SQLAlchemy async resumes code inside greenlets; without this, lines after an
+# `await session...` call are silently reported as uncovered.
+concurrency = ["greenlet", "thread"]
 
 [tool.coverage.report]
 show_missing = true

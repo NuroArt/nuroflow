@@ -16,9 +16,10 @@ and is a common source of subtle bugs.
 - **One set of ORM models** (`nuroflow.db.models`) serves both.
 - The domain layer (`WorkflowSpec`, DAG, state machine, retry math) is pure and I/O-free, so it
   is shared without any sync/async split.
-- Repositories split along the same line: `repositories/async_/` for API read/write paths,
-  `repositories/sync/` for engine paths. The engine and the API need different queries anyway
-  (the engine locks rows; the API paginates history), so duplication is minimal.
+- Repositories split along the same line: `repositories/sqlalchemy.py` (async) for API
+  read/write paths, and sync repositories for engine paths (Phase 3). The engine and the
+  API need different queries anyway (the engine locks rows; the API paginates history),
+  so duplication is minimal.
 
 ## Alternatives
 

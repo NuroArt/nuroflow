@@ -383,7 +383,8 @@ the next future time; `true` backfills each missed slot (bounded by `max_active_
 
 | Area | Endpoints |
 |---|---|
-| Auth | `POST /auth/register`, `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout`, `GET /auth/me` |
+| Auth | `POST /auth/register`, `POST /auth/login`, `POST /auth/refresh`, `POST /auth/logout`, `POST /auth/logout-all`, `POST /auth/change-password`, `GET /auth/me` |
+| Users (admin) | `GET /users`, `GET /users/{id}`, `PATCH /users/{id}` |
 | API keys | `GET/POST /api-keys`, `DELETE /api-keys/{id}` |
 | Connections | `GET/POST /connections`, `PATCH/DELETE /connections/{id}` (secrets write-only) |
 | Workflows | `GET/POST /workflows`, `GET/PATCH/DELETE /workflows/{id}`, `POST /workflows/{id}/versions`, `GET /workflows/{id}/versions`, `POST /workflows/{id}:pause` / `:unpause`, `POST /workflows:validate` |
@@ -406,9 +407,9 @@ the next future time; `true` backfills each missed slot (bounded by `max_active_
 | Concern | Control |
 |---|---|
 | Passwords | Argon2id (argon2-cffi defaults), never logged, constant-time verify |
-| Access tokens | JWT HS256 (RS256 optional), 15 min TTL, `sub`, `role`, `jti`, `iat`, `exp`, `iss`, `aud` validated |
+| Access tokens | JWT HS256 (key derived from the root secret), 15 min TTL; `sub`, `typ`, `jti`, `iat`, `nbf`, `exp`, `iss`, `aud` required; algorithm pinned; time checked against the injected clock |
 | Refresh tokens | Opaque random 256-bit, stored **SHA-256 hashed**, rotated on every use; **reuse of a rotated token revokes the whole family** (theft detection) |
-| API keys | `nf_live_<prefix>_<secret>`; only prefix + Argon2 hash stored; scoped (`events:write`, `runs:write`); shown once |
+| API keys | `nf_<prefix>_<secret>`; only prefix + peppered HMAC-SHA256 stored (high-entropy secret, so a fast hash suffices; see [AUTH.md](AUTH.md)); scoped (`events:write`, `runs:write`); shown once |
 | Webhooks | Per-trigger secret, HMAC-SHA256 over `timestamp.body`, 5-minute replay window |
 | Credentials at rest | `connections.encrypted_secret` = Fernet (AES-128-CBC + HMAC) with key from env / secret manager; key rotation via `MultiFernet` |
 | Authorization | RBAC (`admin`, `editor`, `viewer`) + ownership checks in services (not only routers) |
@@ -517,8 +518,8 @@ process role is just the container command (`nuroflow-api`, `nuroflow-scheduler`
 
 | Phase | Deliverable | Exit criteria |
 |---|---|---|
-| **1** | Architecture, repo scaffold, full DB schema + initial migration, dev environment | `make up && make migrate` creates schema; upgrade/downgrade round-trips; drift check passes |
-| **2** | FastAPI app factory, settings, DB sessions, auth (JWT, refresh rotation, API keys, RBAC) | Auth flows covered by tests; OpenAPI published |
+| **1** ✅ | Architecture, repo scaffold, full DB schema + initial migration, dev environment | `make up && make migrate` creates schema; upgrade/downgrade round-trips; drift check passes |
+| **2** ✅ | FastAPI app factory, settings, DB sessions, auth (JWT, refresh rotation, API keys, RBAC) | Auth flows covered by tests; OpenAPI published |
 | **3** | WorkflowSpec + DAG validation, Orchestrator, Executor, operator registry, Celery worker | Example workflow runs end-to-end with fake LLM/Telegram |
 | **4** | Scheduler (cron, retries, reaper, timeouts), events & webhooks | Chaos test: kill worker + flush Redis mid-run → run still completes |
 | **5** | Telegram, OpenAI, Anthropic integrations, notification service | Real alert delivered; LLM token/cost metrics recorded |
@@ -537,3 +538,5 @@ process role is just the container command (`nuroflow-api`, `nuroflow-scheduler`
 | [0004](adr/0004-declarative-operators-no-arbitrary-code.md) | Declarative operators; no arbitrary user code |
 | [0005](adr/0005-async-api-sync-workers.md) | Async API, sync workers, shared models |
 | [0006](adr/0006-string-enums-and-uuidv7.md) | VARCHAR + CHECK enums and app-generated UUIDv7 keys |
+
+Phase 2 authentication design and its alternatives: [AUTH.md](AUTH.md).

@@ -1,0 +1,78 @@
+"""Composition root for the API process.
+
+Every long-lived object is built **once** here: engine, Redis client, hashers, JWT
+service, rate limiter. FastAPI dependencies then read from ``app.state.container``.
+This is dependency injection without a framework. Tests construct a container with
+swapped parts (in-memory rate limiter, frozen clock) and pass it to ``create_app``.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import timedelta
+
+from redis.asyncio import Redis
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+
+from nuroflow.core.clock import Clock, SystemClock
+from nuroflow.core.config import Settings
+from nuroflow.core.rate_limit import RateLimiter, RedisRateLimiter
+from nuroflow.core.security import ApiKeyCodec, JWTService, PasswordHasher
+from nuroflow.db.session import create_async_db_engine, create_async_session_factory
+from nuroflow.services.auth import AuthPolicy
+
+
+@dataclass(slots=True)
+class AppContainer:
+    settings: Settings
+    engine: AsyncEngine
+    session_factory: async_sessionmaker[AsyncSession]
+    redis: Redis
+    rate_limiter: RateLimiter
+    clock: Clock
+    password_hasher: PasswordHasher
+    jwt: JWTService
+    api_key_codec: ApiKeyCodec
+    auth_policy: AuthPolicy
+
+    async def aclose(self) -> None:
+        await self.redis.aclose()
+        await self.engine.dispose()
+
+
+def build_container(
+    settings: Settings,
+    *,
+    clock: Clock | None = None,
+    rate_limiter: RateLimiter | None = None,
+) -> AppContainer:
+    engine = create_async_db_engine(settings)
+    redis = Redis.from_url(
+        str(settings.redis_url),
+        socket_connect_timeout=2,
+        socket_timeout=2,
+        health_check_interval=30,
+        decode_responses=True,
+    )
+    return AppContainer(
+        settings=settings,
+        engine=engine,
+        session_factory=create_async_session_factory(engine),
+        redis=redis,
+        rate_limiter=rate_limiter or RedisRateLimiter(redis),
+        clock=clock or SystemClock(),
+        password_hasher=PasswordHasher(),
+        jwt=JWTService(
+            signing_key=settings.derive_key("jwt"),
+            algorithm=settings.jwt_algorithm,
+            issuer=settings.jwt_issuer,
+            audience=settings.jwt_audience,
+            ttl=timedelta(seconds=settings.access_token_ttl_seconds),
+        ),
+        api_key_codec=ApiKeyCodec(pepper=settings.derive_key("api-keys")),
+        auth_policy=AuthPolicy(
+            refresh_token_ttl=timedelta(seconds=settings.refresh_token_ttl_seconds),
+            registration_enabled=settings.registration_enabled,
+            password_min_length=settings.password_min_length,
+        ),
+    )

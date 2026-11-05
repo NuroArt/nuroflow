@@ -71,7 +71,8 @@ class ApiKey(UUIDPrimaryKeyMixin, CreatedAtMixin, Base):
     """Machine credential for event ingestion and automation.
 
     Format shown once to the user: ``nf_<prefix>_<secret>``. ``prefix`` is stored in
-    plaintext for O(1) lookup; the full key is verified against ``key_hash`` (Argon2id).
+    plaintext for O(1) lookup; the secret is verified against ``key_hash``, a peppered
+    HMAC-SHA256 (see docs/AUTH.md for why not Argon2).
     """
 
     __tablename__ = "api_keys"

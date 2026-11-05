@@ -23,6 +23,8 @@ lead.captured ─▶ AI qualify ─▶ store ─▶ AI summary ─▶ Telegram a
   sandbox. ([ADR-0004](docs/adr/0004-declarative-operators-no-arbitrary-code.md))
 - **AI tasks.** OpenAI and Anthropic sit behind one provider interface, with JSON-schema-validated
   output and token/cost tracking.
+- **Serious auth.** JWT access tokens, rotating refresh tokens with theft detection, scoped
+  API keys, RBAC, login throttling, and RFC 9457 error responses. ([AUTH.md](docs/AUTH.md))
 - **Operable.** Structured logs, Prometheus metrics, live log tail over SSE, and a React dashboard.
 
 ## Architecture
@@ -39,12 +41,14 @@ flowchart LR
     W --> X[OpenAI · Anthropic · Telegram · HTTP]
 ```
 
-Full design: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** · Schema: **[docs/DATABASE.md](docs/DATABASE.md)** · Decisions: **[docs/adr/](docs/adr/)**
+Full design: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** · Schema: **[docs/DATABASE.md](docs/DATABASE.md)** · Auth: **[docs/AUTH.md](docs/AUTH.md)** · Decisions: **[docs/adr/](docs/adr/)**
 
 ## Quick start
 
 ```bash
 make install && make up && make migrate && make check
+make admin email=you@example.com   # first admin (prompts for a password)
+make api                           # → http://127.0.0.1:8000/docs
 ```
 
 See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for details.
@@ -59,8 +63,8 @@ OpenAI · Anthropic · Telegram Bot API · React + Tailwind · Docker · GitHub 
 | Phase | Scope | Status |
 |---|---|---|
 | 1 | Architecture, repo scaffold, full schema + migration, dev environment | ✅ Done |
-| 2 | FastAPI foundation, settings, DB sessions, JWT auth, API keys, RBAC | ⏳ Next |
-| 3 | WorkflowSpec + DAG validation, orchestrator, executor, operators, Celery | ⬜ |
+| 2 | FastAPI foundation, settings, DB sessions, JWT auth, API keys, RBAC | ✅ Done |
+| 3 | WorkflowSpec + DAG validation, orchestrator, executor, operators, Celery | ⏳ Next |
 | 4 | Scheduler: cron, retries, reaper, timeouts, events & webhooks | ⬜ |
 | 5 | Telegram, OpenAI, Anthropic, notification service | ⬜ |
 | 6 | Logging, metrics, SSE log tail, React dashboard | ⬜ |
