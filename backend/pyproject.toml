@@ -1,0 +1,102 @@
+[project]
+name = "nuroflow"
+version = "0.1.0"
+description = "NuroFlow — a durable, AI-native workflow orchestration platform."
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "MIT" }
+authors = [{ name = "Jonathan Scott" }]
+classifiers = [
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Framework :: FastAPI",
+    "Typing :: Typed",
+]
+
+# Phase 1 runtime dependencies. Each later phase appends its own block, so the
+# history shows *why* every dependency exists.
+dependencies = [
+    "sqlalchemy>=2.0.36,<2.1",
+    "psycopg[binary]>=3.2,<4",
+    "alembic>=1.14,<2",
+    "pydantic>=2.9,<3",
+    "pydantic-settings>=2.6,<3",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-cov>=6.0",
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "pre-commit>=4.0",
+]
+
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/nuroflow"]
+
+# --------------------------------------------------------------------------- #
+# Ruff — lint + format (replaces black, isort, flake8, pyupgrade)
+# --------------------------------------------------------------------------- #
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W", "F",   # pycodestyle + pyflakes
+    "I",             # isort
+    "B",             # bugbear
+    "UP",            # pyupgrade
+    "S",             # bandit (security)
+    "N",             # pep8-naming
+    "SIM",           # simplify
+    "RUF",           # ruff-specific
+    "DTZ",           # no naive datetimes
+    "PT",            # pytest style
+    "TID",           # tidy imports
+]
+ignore = ["S101"]    # assert is fine in tests (re-enabled for src below)
+
+[tool.ruff.lint.per-file-ignores]
+"alembic/versions/*.py" = ["E501"]
+"tests/**/*.py" = ["S", "DTZ"]
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+# --------------------------------------------------------------------------- #
+# mypy — strict: DI mistakes become type errors, not production incidents
+# --------------------------------------------------------------------------- #
+[tool.mypy]
+python_version = "3.12"
+strict = true
+mypy_path = "src"
+packages = ["nuroflow"]
+plugins = ["pydantic.mypy"]
+warn_unreachable = true
+
+# --------------------------------------------------------------------------- #
+# pytest
+# --------------------------------------------------------------------------- #
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra --strict-markers --strict-config"
+markers = [
+    "integration: requires a running PostgreSQL (set NUROFLOW_DATABASE_URL)",
+]
+filterwarnings = ["error"]
+
+[tool.coverage.run]
+source = ["nuroflow"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+exclude_also = ["if TYPE_CHECKING:", "raise NotImplementedError", "\\.\\.\\."]

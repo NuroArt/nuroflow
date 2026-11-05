@@ -1,0 +1,69 @@
+# Local development dependencies only. The app runs on your host with hot reload.
+# The full containerised stack (api, scheduler, worker, dashboard) is docker-compose.yml (Phase 7).
+#
+#   make up        start Postgres + Redis
+#   make down      stop them (data kept in named volumes)
+#   make nuke      stop and DELETE all local data
+#
+# Ports bind to 127.0.0.1 only, so the dev database is never exposed on your network.
+
+name: nuroflow-dev
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: nuroflow
+      POSTGRES_PASSWORD: nuroflow
+      POSTGRES_DB: nuroflow
+      # Match production defaults: UTC, UTF-8.
+      TZ: UTC
+      PGTZ: UTC
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C.UTF-8"
+    command:
+      - postgres
+      - -c
+      - log_min_duration_statement=250   # log slow queries (>250 ms) during development
+      - -c
+      - log_lock_waits=on
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nuroflow -d nuroflow"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    # AOF persistence: survives restarts in dev, though NuroFlow never relies on it (ADR-0001).
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  # Optional DB browser: `docker compose -f docker-compose.dev.yml --profile tools up -d`
+  adminer:
+    image: adminer:4
+    profiles: ["tools"]
+    ports:
+      - "127.0.0.1:8081:8080"
+    environment:
+      ADMINER_DEFAULT_SERVER: postgres
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
+  redis-data:
