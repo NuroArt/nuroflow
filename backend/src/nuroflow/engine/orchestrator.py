@@ -16,7 +16,7 @@ import logging
 import uuid
 
 from nuroflow.core.clock import Clock
-from nuroflow.domain.enums import RunStatus, TaskStatus
+from nuroflow.domain.enums import RunEvent, RunStatus, TaskStatus
 from nuroflow.domain.state import (
     Readiness,
     ensure_run_transition,
@@ -26,8 +26,15 @@ from nuroflow.domain.state import (
 )
 from nuroflow.engine.dispatch import EnqueueRequest
 from nuroflow.engine.store import EngineStore
+from nuroflow.notifications.outbox import emit
 
 logger = logging.getLogger(__name__)
+
+
+_OUTCOME_EVENTS = {
+    RunStatus.SUCCEEDED: RunEvent.RUN_SUCCEEDED,
+    RunStatus.FAILED: RunEvent.RUN_FAILED,
+}
 
 
 class Orchestrator:
@@ -70,6 +77,8 @@ class Orchestrator:
             run.started_at = run.started_at or now
             failed = sorted(k for k, t in tasks.items() if t.status is TaskStatus.FAILED)
             run.error_message = f"failed tasks: {', '.join(failed)}" if failed else None
+            if outcome in _OUTCOME_EVENTS:
+                emit(store.session, run, _OUTCOME_EVENTS[outcome], now=now)
             logger.info(
                 "run finished",
                 extra={"run_id": str(run.id), "status": outcome.value, "failed": failed},
@@ -81,4 +90,5 @@ class Orchestrator:
             ensure_run_transition(run.status, RunStatus.RUNNING)
             run.status = RunStatus.RUNNING
             run.started_at = run.started_at or now
+            emit(store.session, run, RunEvent.RUN_STARTED, now=now)
         return requests

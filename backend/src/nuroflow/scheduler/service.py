@@ -31,6 +31,7 @@ from nuroflow.core.clock import Clock
 from nuroflow.core.config import Settings
 from nuroflow.engine.dispatch import EnqueueRequest, TaskDispatcher
 from nuroflow.engine.orchestrator import Orchestrator
+from nuroflow.notifications.delivery import NotificationSender
 from nuroflow.scheduler.jobs import SchedulerConfig, SchedulerJobs
 
 logger = logging.getLogger(__name__)
@@ -64,6 +65,7 @@ class Scheduler:
             ("dispatch_retries", jobs.dispatch_retries),
             ("fire_cron_triggers", jobs.fire_cron_triggers),
             ("admit_waiting_runs", jobs.admit_waiting_runs),
+            ("deliver_notifications", jobs.deliver_notifications),
         ]
 
     def tick(self) -> TickReport:
@@ -135,8 +137,10 @@ def build_scheduler(
     dispatcher: TaskDispatcher,
     clock: Clock,
     queue_for: Callable[[str], str],
+    notifier: NotificationSender | None = None,
 ) -> Scheduler:
     jobs = SchedulerJobs(
+        notifier=notifier,
         session_factory=session_factory,
         clock=clock,
         orchestrator=Orchestrator(clock=clock),

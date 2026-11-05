@@ -1,4 +1,4 @@
-"""LLM provider port. OpenAI and Anthropic adapters implement it in Phase 5.
+"""LLM provider port, implemented by ``openai``, ``anthropic`` and ``fake``.
 
 The engine and operators depend only on this Protocol (Dependency Inversion), so:
 
@@ -43,7 +43,14 @@ class LLMError(Exception):
 
 class LLMProvider(Protocol):
     name: str
+    requires_credentials: bool
 
-    def complete(self, request: LLMRequest) -> LLMResponse:
-        """Run one completion. Raise :class:`LLMError` with ``retryable`` set appropriately."""
+    def complete(
+        self, request: LLMRequest, *, api_key: str | None = None, base_url: str | None = None
+    ) -> LLMResponse:
+        """Run one completion. Raise :class:`LLMError` with ``retryable`` set appropriately.
+
+        Credentials are passed *per call*: one adapter instance serves every user, each
+        with their own key, without ever storing a key on the adapter.
+        """
         ...

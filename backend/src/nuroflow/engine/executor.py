@@ -34,7 +34,7 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from nuroflow.core.clock import Clock
 from nuroflow.db.models import TaskAttempt
-from nuroflow.domain.enums import AttemptStatus, RunStatus, TaskStatus
+from nuroflow.domain.enums import AttemptStatus, RunEvent, RunStatus, TaskStatus
 from nuroflow.domain.state import ensure_run_transition, ensure_task_transition
 from nuroflow.engine.dispatch import EnqueueRequest
 from nuroflow.engine.heartbeat import Heartbeat
@@ -42,6 +42,7 @@ from nuroflow.engine.orchestrator import Orchestrator
 from nuroflow.engine.retry import RetryPolicy
 from nuroflow.engine.store import EngineStore
 from nuroflow.engine.templating import TemplateRenderer
+from nuroflow.notifications.outbox import emit
 from nuroflow.operators.base import (
     NonRetryableError,
     OperatorContext,
@@ -135,6 +136,7 @@ class TaskExecutor:
             if run.status is RunStatus.PENDING:
                 ensure_run_transition(run.status, RunStatus.RUNNING)
                 run.status, run.started_at = RunStatus.RUNNING, now
+                emit(session, run, RunEvent.RUN_STARTED, now=now)
 
             session.add(
                 TaskAttempt(
@@ -237,7 +239,7 @@ class TaskExecutor:
     ) -> list[EnqueueRequest]:
         with self._sessions() as session, session.begin():
             store = EngineStore(session)
-            store.lock_run(claim.ctx.run_id)
+            run = store.lock_run(claim.ctx.run_id)
             task = store.task_run(task_run_id, lock=True)
             if (
                 task is None
@@ -281,6 +283,15 @@ class TaskExecutor:
                     ensure_task_transition(task.status, TaskStatus.UP_FOR_RETRY)
                     task.status = TaskStatus.UP_FOR_RETRY
                     task.next_attempt_at = now + claim.retry.delay(claim.attempt)
+                    emit(
+                        session,
+                        run,
+                        RunEvent.TASK_RETRYING,
+                        now=now,
+                        task_key=task.task_key,
+                        attempt=claim.attempt,
+                        error=attempt.error_message,
+                    )
                 else:
                     ensure_task_transition(task.status, TaskStatus.FAILED)
                     task.status, task.finished_at = TaskStatus.FAILED, now

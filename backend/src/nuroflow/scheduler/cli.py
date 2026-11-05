@@ -13,6 +13,7 @@ from nuroflow.db.session import create_sync_db_engine, create_sync_session_facto
 from nuroflow.engine.data_store import UnavailableDataStore
 from nuroflow.engine.dispatch import CeleryDispatcher
 from nuroflow.integrations.factory import build_llm_providers, build_telegram_client
+from nuroflow.notifications.delivery import CelerySender
 from nuroflow.operators.registry import build_registry
 from nuroflow.scheduler.service import build_scheduler
 from nuroflow.workers.app_factory import create_celery_app
@@ -22,6 +23,7 @@ def run() -> None:
     settings = get_settings()
     configure_logging(level=settings.log_level, json_output=settings.log_json)
     engine = create_sync_db_engine(settings)
+    celery = create_celery_app(settings)
     # The registry is only consulted for default queues; operators never execute here.
     registry = build_registry(
         llm_providers=build_llm_providers(settings),
@@ -31,9 +33,10 @@ def run() -> None:
     scheduler = build_scheduler(
         settings,
         session_factory=create_sync_session_factory(engine),
-        dispatcher=CeleryDispatcher(create_celery_app(settings)),
+        dispatcher=CeleryDispatcher(celery),
         clock=SystemClock(),
         queue_for=lambda name: registry.get(name).default_queue,
+        notifier=CelerySender(celery),
     )
     scheduler.install_signal_handlers()
     try:

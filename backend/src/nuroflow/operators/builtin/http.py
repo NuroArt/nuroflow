@@ -109,26 +109,33 @@ class HttpRequestOperator(Operator):
         }
 
     def _guard_ssrf(self, url: str) -> None:
-        if self._allow_private:
-            return
-        host = urlsplit(url).hostname or ""
-        try:
-            addresses = self._resolve(host)
-        except OSError as exc:
-            raise RetryableError(f"DNS resolution failed for {host}") from exc
-        for raw in addresses:
-            ip = ipaddress.ip_address(raw)
-            if (
-                ip.is_private
-                or ip.is_loopback
-                or ip.is_link_local
-                or ip.is_reserved
-                or ip.is_multicast
-                or ip.is_unspecified
-            ):
-                raise NonRetryableError(
-                    f"refusing to call {host}: resolves to non-public address {ip}"
-                )
+        if not self._allow_private:
+            assert_public_url(url, self._resolve)
+
+
+def assert_public_url(url: str, resolve: Callable[[str], list[str]] = _system_resolver) -> None:
+    """SSRF guard shared by ``http.request`` and webhook notification channels.
+
+    Raises NonRetryableError if the host resolves to any non-public address.
+    (Residual risk: DNS rebinding between this check and the connect. Closing that
+    fully needs an egress proxy, the recommended production setup; see SECURITY notes.)
+    """
+    host = urlsplit(url).hostname or ""
+    try:
+        addresses = resolve(host)
+    except OSError as exc:
+        raise RetryableError(f"DNS resolution failed for {host}") from exc
+    for raw in addresses:
+        ip = ipaddress.ip_address(raw)
+        if (
+            ip.is_private
+            or ip.is_loopback
+            or ip.is_link_local
+            or ip.is_reserved
+            or ip.is_multicast
+            or ip.is_unspecified
+        ):
+            raise NonRetryableError(f"refusing to call {host}: resolves to non-public address {ip}")
 
 
 _SAFE_HEADERS = frozenset({"content-type", "etag", "location", "retry-after", "x-request-id"})

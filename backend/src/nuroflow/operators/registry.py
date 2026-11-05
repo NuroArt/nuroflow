@@ -16,6 +16,7 @@ from typing import Any
 
 import httpx
 
+from nuroflow.integrations.credentials import CredentialResolver
 from nuroflow.integrations.llm.base import LLMProvider
 from nuroflow.integrations.telegram.base import TelegramClient
 from nuroflow.operators.base import Operator
@@ -80,7 +81,10 @@ def build_registry(
     allow_private_networks: bool = False,
     http_transport: httpx.BaseTransport | None = None,
     load_plugins: bool = True,
+    credentials: CredentialResolver | None = None,
+    llm_pricing: Mapping[str, Mapping[str, float]] | None = None,
 ) -> OperatorRegistry:
+    ai_kwargs: dict[str, Any] = {"credentials": credentials, "pricing": llm_pricing}
     registry = OperatorRegistry(
         [
             NoopOperator(),
@@ -90,9 +94,9 @@ def build_registry(
                 allow_private_networks=allow_private_networks, transport=http_transport
             ),
             DataStoreOperator(data_store),
-            AICompleteOperator(llm_providers),
-            AIStructuredOperator(llm_providers),
-            TelegramSendOperator(telegram),
+            AICompleteOperator(llm_providers, **ai_kwargs),
+            AIStructuredOperator(llm_providers, **ai_kwargs),
+            TelegramSendOperator(telegram, credentials=credentials),
         ]
     )
     if load_plugins:

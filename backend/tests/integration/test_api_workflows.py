@@ -43,6 +43,21 @@ async def editor(client: httpx.AsyncClient, container: AppContainer) -> dict[str
 async def test_import_yaml_and_run_lead_workflow_end_to_end(
     client: httpx.AsyncClient, editor: dict[str, str], harness: EngineHarness
 ) -> None:
+    # The example routes run.failed alerts to a channel named ops-alerts.
+    missing = await client.post(
+        f"{API}/workflows:import",
+        headers=editor | {"Content-Type": "application/yaml"},
+        content=EXAMPLE.read_bytes(),
+    )
+    assert_problem(missing, 422, "validation_error")
+    assert "ops-alerts" in missing.json()["detail"]
+    channel = await client.post(
+        f"{API}/channels",
+        headers=editor,
+        json={"name": "ops-alerts", "type": "telegram", "target": "-100123"},
+    )
+    assert channel.status_code == 201, channel.text
+
     imported = await client.post(
         f"{API}/workflows:import",
         headers=editor | {"Content-Type": "application/yaml"},

@@ -20,6 +20,9 @@ class Scope(StrEnum):
     RUNS_READ = "runs:read"
     RUNS_WRITE = "runs:write"
     EVENTS_WRITE = "events:write"
+    # Separate from workflows:write: managing credentials is a more sensitive privilege
+    # than editing a workflow, and an automation API key rarely needs it.
+    CONNECTIONS_WRITE = "connections:write"
     USERS_ADMIN = "users:admin"
 
 
@@ -32,6 +35,7 @@ ROLE_SCOPES: dict[UserRole, frozenset[Scope]] = {
             Scope.RUNS_READ,
             Scope.RUNS_WRITE,
             Scope.EVENTS_WRITE,
+            Scope.CONNECTIONS_WRITE,
         }
     ),
     UserRole.ADMIN: frozenset(Scope),

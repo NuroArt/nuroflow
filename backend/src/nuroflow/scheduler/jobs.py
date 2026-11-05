@@ -22,8 +22,8 @@ from datetime import datetime, timedelta
 from sqlalchemy.orm import Session, sessionmaker
 
 from nuroflow.core.clock import Clock
-from nuroflow.db.models import TaskRun
-from nuroflow.domain.enums import AttemptStatus, RunStatus, RunTriggerType, TaskStatus
+from nuroflow.db.models import TaskRun, WorkflowRun
+from nuroflow.domain.enums import AttemptStatus, RunEvent, RunStatus, RunTriggerType, TaskStatus
 from nuroflow.domain.schedule import due_slots, next_fire_after
 from nuroflow.domain.state import ensure_run_transition, ensure_task_transition
 from nuroflow.engine.dispatch import EnqueueRequest
@@ -31,6 +31,8 @@ from nuroflow.engine.orchestrator import Orchestrator
 from nuroflow.engine.planner import RunTrigger, admit_run, plan_run
 from nuroflow.engine.recovery import dispatch_due_retries
 from nuroflow.engine.store import EngineStore
+from nuroflow.notifications.delivery import NotificationSender, claim_due
+from nuroflow.notifications.outbox import emit
 
 logger = logging.getLogger(__name__)
 
@@ -52,7 +54,9 @@ class SchedulerJobs:
         orchestrator: Orchestrator,
         queue_for: Callable[[str], str],
         config: SchedulerConfig,
+        notifier: NotificationSender | None = None,
     ) -> None:
+        self._notifier = notifier
         self._sessions = session_factory
         self._clock = clock
         self._orchestrator = orchestrator
@@ -197,6 +201,7 @@ class SchedulerJobs:
                 run.status = RunStatus.FAILED
                 run.finished_at = now
                 run.error_message = "run timed out (deadline exceeded)"
+                emit(session, run, RunEvent.RUN_FAILED, now=now)
                 cancelled = store.cancel_open_tasks(run.id, now)
                 logger.warning(
                     "run timed out", extra={"run_id": str(run.id), "tasks_cancelled": cancelled}
@@ -254,11 +259,11 @@ class SchedulerJobs:
                 and task.heartbeat_at is not None
                 and task.heartbeat_at < now - self._config.heartbeat_timeout
             ):
-                return self._fail_lost_attempt(store, task, now)
+                return self._fail_lost_attempt(store, run, task, now)
             return []
 
     def _fail_lost_attempt(
-        self, store: EngineStore, task: TaskRun, now: datetime
+        self, store: EngineStore, run: WorkflowRun, task: TaskRun, now: datetime
     ) -> list[EnqueueRequest]:
         """The worker died mid-attempt (OOM kill, lost node). Close the attempt as
         failed, then retry if allowed. The attempt still counts, so a task that
@@ -280,7 +285,29 @@ class SchedulerJobs:
             ensure_task_transition(task.status, TaskStatus.UP_FOR_RETRY)
             task.status = TaskStatus.UP_FOR_RETRY
             task.next_attempt_at = now  # retry immediately: the failure wasn't the task's fault
+            emit(
+                store.session,
+                run,
+                RunEvent.TASK_RETRYING,
+                now=now,
+                task_key=task.task_key,
+                attempt=task.attempt_count,
+                error=message,
+            )
             return []
         ensure_task_transition(task.status, TaskStatus.FAILED)
         task.status, task.finished_at = TaskStatus.FAILED, now
         return self._orchestrator.advance(store, task.workflow_run_id)
+
+    # ------------------------------------------------------------------ #
+    # 6. Notification outbox
+    # ------------------------------------------------------------------ #
+    def deliver_notifications(self) -> list[EnqueueRequest]:
+        """Claim due outbox rows (with a lease) and hand them to the sender after commit."""
+        if self._notifier is None:
+            return []
+        with self._sessions() as session, session.begin():
+            claims = claim_due(session, now=self._clock.now(), limit=self._config.batch_size)
+        if claims:
+            self._notifier.send(claims)
+        return []

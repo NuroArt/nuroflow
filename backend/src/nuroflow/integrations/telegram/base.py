@@ -1,4 +1,4 @@
-"""Telegram port. The real Bot API client arrives in Phase 5."""
+"""Telegram port, implemented by ``bot_api.TelegramBotClient`` and ``fake.FakeTelegramClient``."""
 
 from __future__ import annotations
 
@@ -20,7 +20,24 @@ class TelegramError(Exception):
         self.retryable = retryable
 
 
+@dataclass(frozen=True, slots=True)
+class TelegramChat:
+    chat_id: str
+    type: str
+    title: str
+
+
 class TelegramClient(Protocol):
+    requires_credentials: bool
+
     def send_message(self, message: TelegramMessage, *, bot_token: str | None = None) -> int:
         """Send a message and return Telegram's message_id."""
+        ...
+
+    def bot_username(self, *, bot_token: str | None = None) -> str:
+        """``getMe``: validates the token and identifies the bot."""
+        ...
+
+    def recent_chats(self, *, bot_token: str | None = None) -> list[TelegramChat]:
+        """Chats that recently messaged the bot (``getUpdates``): how users find their chat_id."""
         ...

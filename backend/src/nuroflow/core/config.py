@@ -16,7 +16,7 @@ import hashlib
 import hmac
 from enum import StrEnum
 from functools import lru_cache
-from typing import Annotated, Self
+from typing import Annotated, Literal, Self
 
 from pydantic import Field, PostgresDsn, RedisDsn, SecretStr, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -119,6 +119,25 @@ class Settings(BaseSettings):
     # key after a new one lets you rotate without breaking existing ciphertexts.
     encryption_keys: Annotated[list[SecretStr], NoDecode] = Field(default_factory=list)
 
+    # ---- integrations (Phase 5) ------------------------------------------- #
+    # "simulated" routes every LLM/Telegram call to deterministic fakes: zero cost, no keys.
+    # Deployed environments must run "live" (enforced below).
+    llm_mode: Literal["live", "simulated"] = "live"
+    telegram_mode: Literal["live", "simulated"] = "live"
+    # Platform-wide defaults, used when a task names no `connection`.
+    openai_api_key: SecretStr | None = None
+    anthropic_api_key: SecretStr | None = None
+    telegram_bot_token: SecretStr | None = None
+    openai_base_url: str = "https://api.openai.com/v1"
+    anthropic_base_url: str = "https://api.anthropic.com/v1"
+    telegram_base_url: str = "https://api.telegram.org"
+    llm_timeout_seconds: float = Field(default=60.0, gt=0, le=600)
+    # USD per 1M tokens, e.g. {"my-model": {"input": 0.15, "output": 0.60}}.
+    # Prices change often, so they're configuration, not code. Unpriced models record
+    # tokens but no cost.
+    llm_pricing: dict[str, dict[str, float]] = Field(default_factory=dict)
+    notification_max_attempts: int = Field(default=5, ge=1, le=20)
+
     # --------------------------------------------------------------------- #
     @model_validator(mode="before")
     @classmethod
@@ -150,6 +169,10 @@ class Settings(BaseSettings):
             problems.append("NUROFLOW_SECRET_KEY must be set to a random value of 32+ characters")
         if "*" in self.cors_origins:
             problems.append("NUROFLOW_CORS_ORIGINS must not contain '*' when deployed")
+        if self.llm_mode == "simulated" or self.telegram_mode == "simulated":
+            problems.append(
+                "NUROFLOW_LLM_MODE and NUROFLOW_TELEGRAM_MODE must be 'live' when deployed"
+            )
         if self.http_allow_private_networks:
             problems.append(
                 "NUROFLOW_HTTP_ALLOW_PRIVATE_NETWORKS must be false when deployed (SSRF)"

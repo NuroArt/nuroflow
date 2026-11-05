@@ -1,10 +1,9 @@
-"""Builds provider adapters from settings: the single place that knows which concrete
-LLM and Telegram clients exist.
+"""The single place that knows which concrete LLM and Telegram clients exist.
 
-Phase 3 wires **simulated** providers under the real names (``openai``, ``anthropic``)
-plus ``fake``, so the reference workflow runs end to end with zero API keys and zero
-cost. Phase 5 replaces the simulated entries with real SDK adapters whenever the
-corresponding API key is configured. Operators and workflows don't change.
+* ``llm_mode=live``: real OpenAI/Anthropic adapters (credentials resolved per call);
+  ``fake`` stays available for smoke-test workflows.
+* ``llm_mode=simulated``: every provider name maps to a deterministic fake. The
+  reference workflow runs end to end with zero keys and zero cost (local dev, CI, demos).
 """
 
 from __future__ import annotations
@@ -12,22 +11,34 @@ from __future__ import annotations
 import logging
 
 from nuroflow.core.config import Settings
+from nuroflow.integrations.llm.anthropic import AnthropicProvider
 from nuroflow.integrations.llm.base import LLMProvider
 from nuroflow.integrations.llm.fake import FakeLLMProvider
+from nuroflow.integrations.llm.openai import OpenAIProvider
 from nuroflow.integrations.telegram.base import TelegramClient
+from nuroflow.integrations.telegram.bot_api import TelegramBotClient
 from nuroflow.integrations.telegram.fake import FakeTelegramClient
 
 logger = logging.getLogger(__name__)
 
 
 def build_llm_providers(settings: Settings) -> dict[str, LLMProvider]:
-    providers: dict[str, LLMProvider] = {
-        name: FakeLLMProvider(name) for name in ("fake", "openai", "anthropic")
+    if settings.llm_mode == "simulated":
+        logger.warning("LLM providers are SIMULATED (NUROFLOW_LLM_MODE=simulated)")
+        return {name: FakeLLMProvider(name) for name in ("fake", "openai", "anthropic")}
+    return {
+        "fake": FakeLLMProvider("fake"),
+        "openai": OpenAIProvider(
+            base_url=settings.openai_base_url, timeout=settings.llm_timeout_seconds
+        ),
+        "anthropic": AnthropicProvider(
+            base_url=settings.anthropic_base_url, timeout=settings.llm_timeout_seconds
+        ),
     }
-    logger.info("LLM providers are simulated (real adapters arrive in Phase 5)")
-    return providers
 
 
 def build_telegram_client(settings: Settings) -> TelegramClient:
-    logger.info("Telegram is simulated (real Bot API client arrives in Phase 5)")
-    return FakeTelegramClient()
+    if settings.telegram_mode == "simulated":
+        logger.warning("Telegram is SIMULATED (NUROFLOW_TELEGRAM_MODE=simulated)")
+        return FakeTelegramClient()
+    return TelegramBotClient(base_url=settings.telegram_base_url)

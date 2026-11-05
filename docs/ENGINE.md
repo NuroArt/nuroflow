@@ -144,8 +144,9 @@ curl -X POST localhost:8000/api/v1/workflows/$WF/runs -H "Authorization: Bearer 
 curl localhost:8000/api/v1/runs/$RUN -H "Authorization: Bearer $TOKEN"
 ```
 
-LLM and Telegram calls are **simulated** in Phase 3 (deterministic, free). Phase 5 swaps in
-the real OpenAI, Anthropic and Telegram adapters behind the same ports. No workflow changes.
+With `NUROFLOW_LLM_MODE=simulated` (the local default), LLM and Telegram calls are deterministic
+fakes. Set it to `live` and the real OpenAI, Anthropic and Telegram adapters take over behind the
+same ports, with no workflow changes. See [INTEGRATIONS.md](INTEGRATIONS.md).
 
 ## Design decisions & alternatives
 

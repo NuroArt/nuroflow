@@ -155,6 +155,8 @@ def api_settings(database_url: URL, redis_url: str) -> Settings:
         redis_url=redis_url,  # type: ignore[arg-type]
         database_pool_size=5,
         login_max_attempts_per_identity=5,
+        llm_mode="simulated",
+        telegram_mode="simulated",
     )
 
 
@@ -179,6 +181,8 @@ async def container(
         rate_limiter=rate_limiter,
         dispatcher=harness.dispatcher,
         registry=harness.registry,
+        llm_providers={"fake": harness.llm, "openai": harness.llm, "anthropic": harness.llm},
+        telegram=harness.telegram,
     )
     try:
         yield built

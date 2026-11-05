@@ -29,8 +29,14 @@ lead.captured ─▶ AI qualify ─▶ store ─▶ AI summary ─▶ Telegram a
   ([ADR-0004](docs/adr/0004-declarative-operators-no-arbitrary-code.md), [ENGINE.md](docs/ENGINE.md))
 - **Exactly-once state transitions.** Compare-and-set claims, run-row locks and attempt
   fencing are proven by tests with concurrent workers and a real Celery worker.
-- **AI tasks.** OpenAI and Anthropic sit behind one provider interface, with JSON-schema-validated
-  output and token/cost tracking.
+- **AI tasks with failover.** OpenAI and Anthropic sit behind one provider interface:
+  schema-validated output, automatic failover on provider outages, and per-model token/cost
+  reporting. ([INTEGRATIONS.md](docs/INTEGRATIONS.md))
+- **Alerts that can't get lost.** Run events go through a transactional outbox: the alert
+  exists if and only if the state change committed, then it's delivered to Telegram or a
+  signed webhook with retries.
+- **Bring-your-own keys.** Per-user credentials are encrypted at rest, write-only over the
+  API, testable with one call, and can never be borrowed by another user's workflow.
 - **Serious auth.** JWT access tokens, rotating refresh tokens with theft detection, scoped
   API keys, RBAC, login throttling, and RFC 9457 error responses. ([AUTH.md](docs/AUTH.md))
 - **Operable.** Structured logs, Prometheus metrics, live log tail over SSE, and a React dashboard.
@@ -49,7 +55,7 @@ flowchart LR
     W --> X[OpenAI · Anthropic · Telegram · HTTP]
 ```
 
-Full design: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** · Schema: **[docs/DATABASE.md](docs/DATABASE.md)** · Auth: **[docs/AUTH.md](docs/AUTH.md)** · Engine: **[docs/ENGINE.md](docs/ENGINE.md)** · Scheduler: **[docs/SCHEDULER.md](docs/SCHEDULER.md)** · Decisions: **[docs/adr/](docs/adr/)**
+Full design: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** · Schema: **[docs/DATABASE.md](docs/DATABASE.md)** · Auth: **[docs/AUTH.md](docs/AUTH.md)** · Engine: **[docs/ENGINE.md](docs/ENGINE.md)** · Scheduler: **[docs/SCHEDULER.md](docs/SCHEDULER.md)** · Integrations: **[docs/INTEGRATIONS.md](docs/INTEGRATIONS.md)** · Decisions: **[docs/adr/](docs/adr/)**
 
 ## Quick start
 
@@ -78,8 +84,8 @@ OpenAI · Anthropic · Telegram Bot API · React + Tailwind · Docker · GitHub 
 | 2 | FastAPI foundation, settings, DB sessions, JWT auth, API keys, RBAC | ✅ Done |
 | 3 | WorkflowSpec + DAG validation, orchestrator, executor, operators, Celery | ✅ Done |
 | 4 | Scheduler: cron, retries, reaper, timeouts, events & webhooks | ✅ Done |
-| 5 | Telegram, OpenAI, Anthropic, notification service | ⏳ Next |
-| 6 | Logging, metrics, SSE log tail, React dashboard | ⬜ |
+| 5 | Telegram, OpenAI, Anthropic, notification service | ✅ Done |
+| 6 | Logging, metrics, SSE log tail, React dashboard | ⏳ Next |
 | 7 | Production Docker, hardening, CI/CD, test suite ≥ 85% | ⬜ |
 
 ## Project layout

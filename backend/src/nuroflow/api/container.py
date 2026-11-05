@@ -8,6 +8,7 @@ swapped parts (in-memory rate limiter, frozen clock) and pass it to ``create_app
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import timedelta
 
@@ -23,6 +24,9 @@ from nuroflow.db.session import create_async_db_engine, create_async_session_fac
 from nuroflow.engine.data_store import UnavailableDataStore
 from nuroflow.engine.dispatch import CeleryDispatcher, TaskDispatcher
 from nuroflow.integrations.factory import build_llm_providers, build_telegram_client
+from nuroflow.integrations.llm.base import LLMProvider
+from nuroflow.integrations.telegram.base import TelegramClient
+from nuroflow.notifications.delivery import NotificationTransport, build_transport
 from nuroflow.operators.registry import OperatorRegistry, build_registry
 from nuroflow.services.auth import AuthPolicy
 from nuroflow.workers.app_factory import create_celery_app
@@ -43,6 +47,9 @@ class AppContainer:
     registry: OperatorRegistry
     dispatcher: TaskDispatcher
     secrets: SecretBox
+    llm_providers: Mapping[str, LLMProvider]
+    telegram: TelegramClient
+    notification_transport: NotificationTransport
 
     async def aclose(self) -> None:
         await self.redis.aclose()
@@ -56,8 +63,13 @@ def build_container(
     rate_limiter: RateLimiter | None = None,
     dispatcher: TaskDispatcher | None = None,
     registry: OperatorRegistry | None = None,
+    llm_providers: Mapping[str, LLMProvider] | None = None,
+    telegram: TelegramClient | None = None,
 ) -> AppContainer:
+    clock = clock or SystemClock()
     engine = create_async_db_engine(settings)
+    llm_providers = llm_providers if llm_providers is not None else build_llm_providers(settings)
+    telegram = telegram or build_telegram_client(settings)
     redis = Redis.from_url(
         str(settings.redis_url),
         socket_connect_timeout=2,
@@ -71,7 +83,7 @@ def build_container(
         session_factory=create_async_session_factory(engine),
         redis=redis,
         rate_limiter=rate_limiter or RedisRateLimiter(redis),
-        clock=clock or SystemClock(),
+        clock=clock,
         password_hasher=PasswordHasher(),
         jwt=JWTService(
             signing_key=settings.derive_key("jwt"),
@@ -90,12 +102,15 @@ def build_container(
         # data.store gets a placeholder that refuses to run.
         registry=registry
         or build_registry(
-            llm_providers=build_llm_providers(settings),
-            telegram=build_telegram_client(settings),
+            llm_providers=llm_providers,
+            telegram=telegram,
             data_store=UnavailableDataStore(),
             allow_private_networks=settings.http_allow_private_networks,
         ),
         # Producer-only Celery app: the API publishes task_run_ids; workers consume them.
         dispatcher=dispatcher or CeleryDispatcher(create_celery_app(settings)),
         secrets=SecretBox.from_settings(settings),
+        llm_providers=llm_providers,
+        telegram=telegram,
+        notification_transport=build_transport(settings, telegram=telegram, clock=clock),
     )

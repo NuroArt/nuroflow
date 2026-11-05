@@ -15,7 +15,12 @@ from nuroflow.core.clock import Clock
 from nuroflow.core.crypto import SecretBox
 from nuroflow.core.exceptions import Conflict, NotFound, PermissionDenied, ValidationError
 from nuroflow.core.ids import uuid7
-from nuroflow.db.models import Workflow, WorkflowTrigger, WorkflowVersion
+from nuroflow.db.models import (
+    NotificationSubscription,
+    Workflow,
+    WorkflowTrigger,
+    WorkflowVersion,
+)
 from nuroflow.domain.auth import AuthMethod, Principal, Scope
 from nuroflow.domain.enums import TriggerType
 from nuroflow.domain.schedule import next_fire_after
@@ -108,6 +113,7 @@ class WorkflowService:
         await self._uow.workflows.add(workflow)
         version = await self._add_version(workflow, spec, 1, principal, change_note)
         await self._sync_triggers(workflow, spec)
+        await self._sync_notifications(workflow, spec)
         await self._uow.commit()
         logger.info("workflow created", extra={"workflow_id": str(workflow.id), "slug": spec.slug})
         return workflow, version
@@ -138,6 +144,7 @@ class WorkflowService:
         version = await self._add_version(workflow, spec, number, principal, change_note)
         _apply_metadata(workflow, spec)
         await self._sync_triggers(workflow, spec)
+        await self._sync_notifications(workflow, spec)
         await self._uow.commit()
         logger.info(
             "workflow version created",
@@ -251,6 +258,41 @@ class WorkflowService:
                     row.webhook_secret_encrypted = self._secrets.encrypt(_new_webhook_secret())
             if is_new:
                 await self._uow.workflows.add_trigger(row)
+
+    async def _sync_notifications(self, workflow: Workflow, spec: WorkflowSpec) -> None:
+        """Make notification_subscriptions match ``spec.notifications``.
+
+        Channels are referenced *by name*, so the same YAML works in every environment
+        (each has its own ``ops-alerts`` channel). An unknown name fails the save: a
+        typo would otherwise mean alerts that silently never arrive.
+        """
+        repo = self._uow.integrations
+        merged: dict[str, set[str]] = {}
+        for n in spec.notifications:  # the same channel listed twice: union its events
+            merged.setdefault(n.channel, set()).update(e.value for e in n.events)
+        wanted = {name: sorted(events) for name, events in merged.items()}
+        channels = await repo.channels_by_name(workflow.owner_id, list(wanted))
+        missing = sorted(set(wanted) - set(channels))
+        if missing:
+            raise ValidationError(
+                f"unknown notification channel(s): {', '.join(missing)} "
+                "(create them first: POST /api/v1/channels)",
+                field="notifications",
+            )
+        by_channel = {s.channel_id: s for s in await repo.list_subscriptions(workflow.id)}
+        desired = {channels[name].id: events for name, events in wanted.items()}
+        for channel_id in by_channel.keys() - desired.keys():
+            await repo.delete_subscription(by_channel[channel_id])
+        for channel_id, events in desired.items():
+            existing = by_channel.get(channel_id)
+            if existing is None:
+                await repo.add_subscription(
+                    NotificationSubscription(
+                        id=uuid7(), workflow_id=workflow.id, channel_id=channel_id, events=events
+                    )
+                )
+            else:
+                existing.events, existing.is_enabled = events, True
 
     # ------------------------------------------------------------------ #
     def _valid_spec(self, definition: dict[str, Any]) -> WorkflowSpec:

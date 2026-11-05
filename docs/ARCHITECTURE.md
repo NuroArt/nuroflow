@@ -317,8 +317,8 @@ sequenceDiagram
     W->>RD: enqueue store
     Note over W,PG: store → summarize repeat the same claim/execute/advance loop
     W->>TG: sendMessage (alert task)
-    W->>PG: alert succeeded → Orchestrator sees all terminal → run succeeded
-    W->>RD: enqueue notification(run.succeeded)
+    W->>PG: alert succeeded → Orchestrator: run succeeded<br/>+ outbox row (same transaction)
+    Note over PG,RD: scheduler claims the outbox row (lease) → Celery delivers it (INTEGRATIONS.md)
 ```
 
 ### 6.2 Failure and retry
@@ -396,7 +396,9 @@ the next future time; `true` backfills each missed slot (bounded by `max_active_
 | Runs | `POST /workflows/{id}/runs` (manual), `GET /runs`, `GET /runs/{id}`, `POST /runs/{id}:cancel`, `POST /runs/{id}:retry` |
 | Tasks | `GET /runs/{id}/tasks`, `GET /task-runs/{id}/attempts`, `GET /task-runs/{id}/logs`, `GET /task-runs/{id}/logs/stream` (SSE) |
 | Events & webhooks | `POST /events`, `POST /hooks/{trigger_id}` (HMAC-SHA256 signed) |
-| Notifications | `GET/POST /notification-channels`, `POST /notification-channels/{id}:test`, subscriptions CRUD |
+| Connections | `GET/POST /connections`, `PATCH/DELETE /connections/{id}`, `POST /connections/{id}:test`, `GET /connections/{id}/telegram-chats` |
+| Notifications | `GET/POST /channels`, `PATCH/DELETE /channels/{id}`, `POST /channels/{id}:test`, `GET /notification-deliveries` (subscriptions come from the workflow spec) |
+| Usage | `GET /usage/llm?days=30` (tokens and cost per model) |
 | Ops | `GET /healthz`, `GET /readyz`, `GET /metrics` |
 
 - **Conventions:** cursor pagination (`?limit=&cursor=`) on all lists — offset pagination degrades

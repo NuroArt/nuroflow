@@ -13,8 +13,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from nuroflow.db.models import (
     ApiKey,
+    Connection,
     DataRecord,
     Event,
+    NotificationChannel,
+    NotificationDelivery,
+    NotificationSubscription,
     RefreshToken,
     TaskAttempt,
     TaskLog,
@@ -334,6 +338,139 @@ class SqlAlchemyEventRepository:
         return (await self._s.scalars(stmt)).all()
 
 
+class SqlAlchemyIntegrationRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._s = session
+
+    async def _add(self, obj: Any) -> None:
+        self._s.add(obj)
+        await self._s.flush()
+
+    async def _delete(self, obj: Any) -> None:
+        await self._s.delete(obj)
+        await self._s.flush()
+
+    # ---- connections -------------------------------------------------- #
+    async def add_connection(self, connection: Connection) -> None:
+        await self._add(connection)
+
+    async def get_connection(self, connection_id: uuid.UUID) -> Connection | None:
+        return await self._s.get(Connection, connection_id)
+
+    async def get_connection_by_name(self, owner_id: uuid.UUID, name: str) -> Connection | None:
+        stmt = sa.select(Connection).where(Connection.owner_id == owner_id, Connection.name == name)
+        return (await self._s.scalars(stmt)).one_or_none()
+
+    async def list_connections(self, owner_id: uuid.UUID) -> Sequence[Connection]:
+        stmt = (
+            sa.select(Connection).where(Connection.owner_id == owner_id).order_by(Connection.name)
+        )
+        return (await self._s.scalars(stmt)).all()
+
+    async def delete_connection(self, connection: Connection) -> None:
+        await self._delete(connection)
+
+    async def connection_in_use(self, connection_id: uuid.UUID) -> bool:
+        stmt = sa.select(sa.exists().where(NotificationChannel.connection_id == connection_id))
+        return bool(await self._s.scalar(stmt))
+
+    # ---- channels ----------------------------------------------------- #
+    async def add_channel(self, channel: NotificationChannel) -> None:
+        await self._add(channel)
+
+    async def get_channel(self, channel_id: uuid.UUID) -> NotificationChannel | None:
+        return await self._s.get(NotificationChannel, channel_id)
+
+    async def channels_by_name(
+        self, owner_id: uuid.UUID, names: Sequence[str]
+    ) -> dict[str, NotificationChannel]:
+        if not names:
+            return {}
+        stmt = sa.select(NotificationChannel).where(
+            NotificationChannel.owner_id == owner_id, NotificationChannel.name.in_(names)
+        )
+        return {c.name: c for c in (await self._s.scalars(stmt)).all()}
+
+    async def list_channels(self, owner_id: uuid.UUID) -> Sequence[NotificationChannel]:
+        stmt = (
+            sa.select(NotificationChannel)
+            .where(NotificationChannel.owner_id == owner_id)
+            .order_by(NotificationChannel.name)
+        )
+        return (await self._s.scalars(stmt)).all()
+
+    async def delete_channel(self, channel: NotificationChannel) -> None:
+        await self._delete(channel)
+
+    # ---- subscriptions ------------------------------------------------ #
+    async def list_subscriptions(
+        self, workflow_id: uuid.UUID
+    ) -> Sequence[NotificationSubscription]:
+        stmt = sa.select(NotificationSubscription).where(
+            NotificationSubscription.workflow_id == workflow_id
+        )
+        return (await self._s.scalars(stmt)).all()
+
+    async def add_subscription(self, subscription: NotificationSubscription) -> None:
+        await self._add(subscription)
+
+    async def delete_subscription(self, subscription: NotificationSubscription) -> None:
+        await self._delete(subscription)
+
+    # ---- deliveries & usage ------------------------------------------- #
+    async def add_delivery(self, delivery: NotificationDelivery) -> None:
+        await self._add(delivery)
+
+    async def list_deliveries(
+        self, owner_id: uuid.UUID, *, channel_id: uuid.UUID | None, limit: int
+    ) -> Sequence[NotificationDelivery]:
+        stmt = (
+            sa.select(NotificationDelivery)
+            .join(NotificationChannel, NotificationChannel.id == NotificationDelivery.channel_id)
+            .where(NotificationChannel.owner_id == owner_id)
+            .order_by(NotificationDelivery.id.desc())
+            .limit(limit)
+        )
+        if channel_id is not None:
+            stmt = stmt.where(NotificationDelivery.channel_id == channel_id)
+        return (await self._s.scalars(stmt)).all()
+
+    async def llm_usage(self, owner_id: uuid.UUID, *, since: datetime) -> list[dict[str, Any]]:
+        """Token and cost totals from ``task_attempts.metrics.llm``, grouped by model.
+
+        Aggregated in Postgres: only one row per (provider, model) crosses the wire.
+        """
+        llm = TaskAttempt.metrics["llm"]
+        provider = llm["provider"].astext
+        model = llm["model"].astext
+
+        def total(key: str) -> Any:
+            return sa.func.coalesce(sa.func.sum(llm[key].astext.cast(sa.Numeric)), 0)
+
+        stmt = (
+            sa.select(
+                provider.label("provider"),
+                model.label("model"),
+                sa.func.count().label("calls"),
+                total("input_tokens").label("input_tokens"),
+                total("output_tokens").label("output_tokens"),
+                total("cost_usd").label("cost_usd"),
+                sa.func.count(llm["cost_usd"]).label("priced_calls"),
+            )
+            .join(TaskRun, TaskRun.id == TaskAttempt.task_run_id)
+            .join(WorkflowRun, WorkflowRun.id == TaskRun.workflow_run_id)
+            .join(Workflow, Workflow.id == WorkflowRun.workflow_id)
+            .where(
+                Workflow.owner_id == owner_id,
+                TaskAttempt.started_at >= since,
+                TaskAttempt.metrics.has_key("llm"),
+            )
+            .group_by(provider, model)
+            .order_by(sa.desc("cost_usd"), provider, model)
+        )
+        return [dict(row._mapping) for row in (await self._s.execute(stmt)).all()]
+
+
 class SqlAlchemyUnitOfWork:
     """Wraps one ``AsyncSession``. The session's lifetime is owned by the caller."""
 
@@ -345,6 +482,7 @@ class SqlAlchemyUnitOfWork:
         self.workflows = SqlAlchemyWorkflowRepository(session)
         self.runs = SqlAlchemyRunRepository(session)
         self.events = SqlAlchemyEventRepository(session)
+        self.integrations = SqlAlchemyIntegrationRepository(session)
 
     async def commit(self) -> None:
         await self.session.commit()

@@ -25,6 +25,7 @@ from nuroflow.repositories.sqlalchemy import SqlAlchemyUnitOfWork
 from nuroflow.services.api_keys import ApiKeyService
 from nuroflow.services.auth import AuthService, ClientInfo
 from nuroflow.services.ingest import IngestService
+from nuroflow.services.integrations import IntegrationService
 from nuroflow.services.runs import RunService
 from nuroflow.services.users import UserService
 from nuroflow.services.workflows import WorkflowService
@@ -92,6 +93,17 @@ def get_ingest_service(uow: UoW, container: Container) -> IngestService:
     )
 
 
+def get_integration_service(uow: UoW, container: Container) -> IntegrationService:
+    return IntegrationService(
+        uow,
+        secrets=container.secrets,
+        clock=container.clock,
+        llm_providers=container.llm_providers,
+        telegram=container.telegram,
+        transport=container.notification_transport,
+    )
+
+
 def get_run_service(uow: UoW, container: Container) -> RunService:
     return RunService(
         uow, registry=container.registry, dispatcher=container.dispatcher, clock=container.clock
@@ -104,6 +116,7 @@ RunServiceDep = Annotated[RunService, Depends(get_run_service)]
 IngestServiceDep = Annotated[IngestService, Depends(get_ingest_service)]
 ApiKeyServiceDep = Annotated[ApiKeyService, Depends(get_api_key_service)]
 UserServiceDep = Annotated[UserService, Depends(get_user_service)]
+IntegrationServiceDep = Annotated[IntegrationService, Depends(get_integration_service)]
 
 
 def get_client_info(request: Request) -> ClientInfo:

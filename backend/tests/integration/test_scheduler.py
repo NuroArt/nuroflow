@@ -331,6 +331,7 @@ def test_one_failing_job_does_not_stop_the_tick(harness: EngineHarness) -> None:
         "dispatch_retries",
         "fire_cron_triggers",
         "admit_waiting_runs",
+        "deliver_notifications",
     }
 
 

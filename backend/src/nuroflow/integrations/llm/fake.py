@@ -16,6 +16,8 @@ from nuroflow.integrations.llm.base import LLMError, LLMRequest, LLMResponse
 
 
 class FakeLLMProvider:
+    requires_credentials = False
+
     def __init__(self, name: str = "fake") -> None:
         self.name = name
         self.requests: list[LLMRequest] = []
@@ -25,7 +27,9 @@ class FakeLLMProvider:
         for r in responses:
             self._script.append(json.dumps(r) if isinstance(r, dict) else r)
 
-    def complete(self, request: LLMRequest) -> LLMResponse:
+    def complete(
+        self, request: LLMRequest, *, api_key: str | None = None, base_url: str | None = None
+    ) -> LLMResponse:
         self.requests.append(request)
         if self._script:
             item = self._script.popleft()

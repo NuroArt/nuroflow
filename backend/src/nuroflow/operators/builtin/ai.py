@@ -18,8 +18,10 @@ from typing import Any
 
 from jsonschema import Draft202012Validator
 from jsonschema.exceptions import SchemaError
-from pydantic import Field
+from pydantic import BaseModel, ConfigDict, Field
 
+from nuroflow.domain.enums import ConnectionType, LogLevel
+from nuroflow.integrations.credentials import CredentialError, CredentialResolver
 from nuroflow.integrations.llm.base import LLMError, LLMProvider, LLMRequest, LLMResponse
 from nuroflow.operators.base import (
     NonRetryableError,
@@ -30,9 +32,25 @@ from nuroflow.operators.base import (
 )
 
 
+class ProviderTarget(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    provider: str
+    model: str = Field(min_length=1, max_length=100)
+    connection: str | None = None
+
+
 class AICompleteInput(OperatorInput):
     provider: str = Field(examples=["anthropic", "openai", "fake"])
     model: str = Field(min_length=1, max_length=100)
+    connection: str | None = Field(
+        default=None, description="Named connection holding the API key (else platform default)"
+    )
+    fallback: list[ProviderTarget] = Field(
+        default_factory=list,
+        max_length=3,
+        description="Tried in order when the primary fails with a *retryable* error",
+    )
     prompt: str = Field(min_length=1, max_length=100_000)
     system: str | None = Field(default=None, max_length=20_000)
     max_tokens: int = Field(default=512, ge=1, le=8192)
@@ -46,37 +64,94 @@ class AIStructuredInput(AICompleteInput):
 class _AIOperator(Operator):
     default_queue = "ai"
 
-    def __init__(self, providers: Mapping[str, LLMProvider]) -> None:
+    def __init__(
+        self,
+        providers: Mapping[str, LLMProvider],
+        *,
+        credentials: CredentialResolver | None = None,
+        pricing: Mapping[str, Mapping[str, float]] | None = None,
+    ) -> None:
         self._providers = providers
+        self._credentials = credentials
+        self._pricing = pricing or {}
 
     def _call(self, inputs: AICompleteInput, ctx: OperatorContext, **extra: Any) -> LLMResponse:
-        provider = self._providers.get(inputs.provider)
+        targets = [
+            ProviderTarget(
+                provider=inputs.provider, model=inputs.model, connection=inputs.connection
+            ),
+            *inputs.fallback,
+        ]
+        last: LLMError | None = None
+        for index, target in enumerate(targets):
+            try:
+                response = self._call_one(target, inputs, ctx, **extra)
+            except LLMError as exc:
+                last = exc
+                if not exc.retryable:
+                    # Permanent errors (bad key, bad request) are the author's to fix.
+                    # Failing over would hide them behind a working-but-different model.
+                    raise NonRetryableError(str(exc)) from exc
+                if index + 1 < len(targets):
+                    nxt = targets[index + 1]
+                    ctx.log(
+                        "llm provider failed, failing over",
+                        level=LogLevel.WARNING,
+                        failed=f"{target.provider}/{target.model}",
+                        next=f"{nxt.provider}/{nxt.model}",
+                        error=str(exc),
+                    )
+                continue
+            self._meter(response, ctx, fallback_index=index)
+            return response
+        assert last is not None
+        raise RetryableError(str(last)) from last
+
+    def _call_one(
+        self, target: ProviderTarget, inputs: AICompleteInput, ctx: OperatorContext, **extra: Any
+    ) -> LLMResponse:
+        provider = self._providers.get(target.provider)
         if provider is None:
             raise NonRetryableError(
-                f"LLM provider '{inputs.provider}' is not configured "
+                f"LLM provider '{target.provider}' is not configured "
                 f"(available: {', '.join(sorted(self._providers)) or 'none'})"
             )
+        api_key: str | None = None
+        base_url: str | None = None
+        if provider.requires_credentials:
+            kind = ConnectionType(target.provider)
+            if self._credentials is None:
+                raise NonRetryableError(f"no credential resolver configured for {kind.value}")
+            try:
+                cred = self._credentials.resolve(
+                    owner_id=ctx.owner_id, kind=kind, name=target.connection
+                )
+            except CredentialError as exc:
+                raise NonRetryableError(str(exc)) from exc
+            api_key, base_url = cred.secret, cred.config.get("base_url")
         request = LLMRequest(
-            model=inputs.model,
+            model=target.model,
             prompt=inputs.prompt,
             system=inputs.system,
             max_tokens=inputs.max_tokens,
             temperature=inputs.temperature,
             **extra,
         )
-        try:
-            response = provider.complete(request)
-        except LLMError as exc:
-            raise (RetryableError if exc.retryable else NonRetryableError)(str(exc)) from exc
+        return provider.complete(request, api_key=api_key, base_url=base_url)
+
+    def _meter(self, response: LLMResponse, ctx: OperatorContext, *, fallback_index: int) -> None:
         usage: dict[str, Any] = {
             "provider": response.provider,
             "model": response.model,
             "input_tokens": response.input_tokens,
             "output_tokens": response.output_tokens,
+            "fallback_index": fallback_index,
         }
+        cost = estimate_cost(self._pricing, response)
+        if cost is not None:
+            usage["cost_usd"] = cost
         ctx.metrics["llm"] = usage
         ctx.log("llm call completed", **usage)
-        return response
 
 
 class AICompleteOperator(_AIOperator):
@@ -127,6 +202,22 @@ class AIStructuredOperator(_AIOperator):
             if schema.get("type") != "object":
                 problems.append("output_schema must describe an object (type: object)")
         return problems
+
+
+def estimate_cost(
+    pricing: Mapping[str, Mapping[str, float]], response: LLMResponse
+) -> float | None:
+    """USD cost from configured per-1M-token prices. Longest matching model prefix
+    wins, so ``gpt-4o-mini`` matches a dated ``gpt-4o-mini-2024-07-18`` response."""
+    matches = [k for k in pricing if response.model.startswith(k)]
+    if not matches:
+        return None
+    price = pricing[max(matches, key=len)]
+    cost = (
+        response.input_tokens * price.get("input", 0.0)
+        + response.output_tokens * price.get("output", 0.0)
+    ) / 1_000_000
+    return round(cost, 6)
 
 
 def _validator(schema: dict[str, Any]) -> Draft202012Validator:

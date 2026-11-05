@@ -27,6 +27,7 @@ from celery.signals import worker_process_init, worker_process_shutdown
 
 from nuroflow.core.config import get_settings
 from nuroflow.engine.dispatch import EXECUTE_TASK_RUN, CeleryDispatcher
+from nuroflow.notifications.delivery import DELIVER_NOTIFICATION, DeliveryClaim
 from nuroflow.workers.app_factory import create_celery_app
 from nuroflow.workers.container import WorkerContainer, build_worker_container
 
@@ -72,3 +73,8 @@ def execute_task_run(task_run_id: str) -> None:
     container = get_container()
     follow_ups = container.executor.execute(uuid.UUID(task_run_id))
     container.dispatcher.enqueue(follow_ups)
+
+
+@celery_app.task(name=DELIVER_NOTIFICATION)
+def deliver_notification(delivery_id: str, attempt: int) -> None:
+    get_container().deliverer.deliver(DeliveryClaim(uuid.UUID(delivery_id), attempt))

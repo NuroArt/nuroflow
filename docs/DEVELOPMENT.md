@@ -19,7 +19,7 @@ make migrate     # creates all 16 tables
 make check       # lint + mypy strict + tests + migration drift check
 ```
 
-Expected result: `267 passed`, coverage ~93%, `No new upgrade operations detected.`
+Expected result: `315 passed`, coverage ~93%, `No new upgrade operations detected.`
 
 ## Run the API
 
@@ -40,7 +40,7 @@ make scheduler                     # third terminal: cron, retries, reaper, time
 
 Import `examples/workflows/lead-qualification.yaml` with `POST /api/v1/workflows:import` and
 start it with `POST /api/v1/workflows/{id}/runs`. [ENGINE.md](ENGINE.md#running-it) has the
-curl commands. LLM and Telegram calls are simulated until Phase 5.
+curl commands. LLM and Telegram calls are simulated while `NUROFLOW_LLM_MODE`/`NUROFLOW_TELEGRAM_MODE` are `simulated` (the `.env.example` default). See [INTEGRATIONS.md](INTEGRATIONS.md) to go live.
 
 ## Daily loop
 
