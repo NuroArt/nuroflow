@@ -3,7 +3,7 @@
 # to the backend. One origin for UI and API means no CORS and a strict CSP.
 
 # ---------------------------------------------------------------- 1. build
-FROM node:22.11-alpine AS build
+FROM node:26.12-alpine AS build
 WORKDIR /src
 COPY package.json package-lock.json ./
 RUN --mount=type=cache,target=/root/.npm \
