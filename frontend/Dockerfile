@@ -15,7 +15,7 @@ RUN npm run build
 
 # ---------------------------------------------------------------- 2. serve
 # nginx-unprivileged: runs as uid 101 and listens on 8080 (no root, no CAP_NET_BIND).
-FROM nginxinc/nginx-unprivileged:1.30-alpine AS runtime
+FROM nginxinc/nginx-unprivileged:1.31-alpine AS runtime
 LABEL org.opencontainers.image.title="nuroflow-web" \
       org.opencontainers.image.source="https://github.com/Nuroart/nuroflow" \
       org.opencontainers.image.licenses="MIT"
