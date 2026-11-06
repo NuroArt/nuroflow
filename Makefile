@@ -7,7 +7,7 @@ RUN          := $(BACKEND) uv run
 
 .PHONY: help install up down nuke logs migrate migration downgrade sql db-shell api worker scheduler admin \
         test test-unit test-integration lint format typecheck check observe web web-install web-test web-build \
-        prod-secrets prod-build prod-up prod-down prod-admin prod-logs prod-ps smoke
+        prod-secrets prod-build prod-up prod-down prod-admin prod-logs prod-ps smoke scan
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -130,3 +130,7 @@ prod-ps: ## Show service status and health
 
 smoke: ## End-to-end smoke test against a running stack (BASE_URL, SMOKE_EMAIL, SMOKE_PASSWORD)
 	python3 deploy/smoke.py
+
+scan: ## Scan the built images for fixable HIGH/CRITICAL CVEs (same scanner as CI)
+	deploy/scan-image.sh nuroflow-backend:latest
+	deploy/scan-image.sh nuroflow-web:latest

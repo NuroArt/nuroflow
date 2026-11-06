@@ -143,19 +143,9 @@ jobs:
           cache-from: type=gha,scope=web
           cache-to: type=gha,mode=max,scope=web
       - name: CVE scan backend (fail on fixable HIGH/CRITICAL)
-        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.33.1
-        with:
-          image-ref: nuroflow-backend:ci
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          exit-code: "1"
+        run: deploy/scan-image.sh nuroflow-backend:ci
       - name: CVE scan web
-        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.33.1
-        with:
-          image-ref: nuroflow-web:ci
-          severity: HIGH,CRITICAL
-          ignore-unfixed: true
-          exit-code: "1"
+        run: deploy/scan-image.sh nuroflow-web:ci
       - name: Start the production stack
         env:
           NUROFLOW_TAG: ci
@@ -170,9 +160,11 @@ jobs:
           docker compose --env-file .env.prod run --rm -e NUROFLOW_ADMIN_PASSWORD="$SMOKE_PASSWORD" \
             api nuroflow create-admin --email smoke@nuroworks.com
           BASE_URL=http://localhost:8080 SMOKE_EMAIL=smoke@nuroworks.com python3 deploy/smoke.py
+      # Only meaningful once the stack was started: if an earlier step (e.g. the CVE
+      # scan) failed, .env.prod doesn't exist and these must not add noise.
       - name: Service logs on failure
-        if: failure()
+        if: failure() && hashFiles('.env.prod') != ''
         run: docker compose --env-file .env.prod logs --tail=200
       - name: Tear down
-        if: always()
+        if: always() && hashFiles('.env.prod') != ''
         run: docker compose --env-file .env.prod down -v
