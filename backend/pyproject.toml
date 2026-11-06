@@ -36,7 +36,7 @@ dependencies = [
     "httpx>=0.27,<1",
     "pyyaml>=6.0,<7",
     # Phase 4: scheduler, webhooks (secret encryption)
-    "cryptography>=43,<47",
+    "cryptography>=50.0.2,<51",
     "prometheus-client>=0.21,<1",
 ]
 
@@ -149,6 +149,9 @@ branch = true
 concurrency = ["greenlet", "thread"]
 
 [tool.coverage.report]
+# CI gate. The suite sits around 93%; 85% leaves room for honest refactors without
+# letting coverage silently erode.
+fail_under = 85
 show_missing = true
 skip_covered = true
 exclude_also = ["if TYPE_CHECKING:", "raise NotImplementedError", "\\.\\.\\."]

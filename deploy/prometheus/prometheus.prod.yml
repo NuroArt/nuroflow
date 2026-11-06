@@ -1,0 +1,28 @@
+# In-stack scrape config (compose `observability` profile). Targets are service names
+# on the internal network. The API endpoint requires the metrics token.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files: [/etc/prometheus/alerts.yml]
+
+scrape_configs:
+  - job_name: nuroflow-api
+    authorization:
+      credentials_file: /run/secrets/metrics_token
+    dns_sd_configs:                     # every API replica, not just one
+      - names: [api]
+        type: A
+        port: 8000
+
+  - job_name: nuroflow-worker
+    dns_sd_configs:
+      - names: [worker, worker-ai]
+        type: A
+        port: 9101
+
+  - job_name: nuroflow-scheduler
+    dns_sd_configs:
+      - names: [scheduler]
+        type: A
+        port: 9102

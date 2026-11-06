@@ -7,6 +7,9 @@
   failed migration leaves no half-applied schema.
 * A session-level lock timeout stops a migration from queueing behind a long query
   and blocking all traffic while it waits.
+* A Postgres **advisory lock** serializes concurrent migrators: two deploys (or two
+  replicas that each run ``migrate`` on start) can't apply the same revision twice.
+  The second waits, then finds nothing to do.
 """
 
 from __future__ import annotations
@@ -31,6 +34,7 @@ if not config.get_main_option("sqlalchemy.url"):
 target_metadata = Base.metadata
 
 LOCK_TIMEOUT = "5s"
+MIGRATION_LOCK_ID = 0x4E55524F  # "NURO": arbitrary but fixed across releases
 
 
 def run_migrations_offline() -> None:
@@ -54,6 +58,9 @@ def run_migrations_online() -> None:
         poolclass=pool.NullPool,
     )
     with connectable.connect() as connection:
+        # Session-level and blocking: released automatically when the connection closes,
+        # even if the migration crashes.
+        connection.execute(text("SELECT pg_advisory_lock(:id)"), {"id": MIGRATION_LOCK_ID})
         connection.execute(text(f"SET lock_timeout = '{LOCK_TIMEOUT}'"))
         # SQLAlchemy 2.0 autobegins a transaction on the first execute. Commit it, or
         # Alembic joins that outer transaction and its own commits become no-ops,

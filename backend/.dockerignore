@@ -1,0 +1,11 @@
+# Only what the image needs. Everything else stays out of the build context:
+# secrets (.env), caches, tests, local venvs.
+*
+!pyproject.toml
+!uv.lock
+!README.md
+!src/
+!alembic/
+!alembic.ini
+**/__pycache__
+**/*.pyc

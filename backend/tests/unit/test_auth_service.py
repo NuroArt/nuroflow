@@ -249,3 +249,15 @@ async def test_access_token_expires_on_the_service_clock(
     clock.advance(minutes=16)
     with pytest.raises(TokenExpired):
         await auth.authenticate_access_token(pair.access_token)
+
+
+@pytest.mark.parametrize("email", ["admin@nuroflow.local", "not-an-email", "a@b"])
+async def test_register_rejects_emails_the_login_schema_would_reject(
+    auth: AuthService, email: str
+) -> None:
+    # Regression: the CLI bypasses HTTP schemas and once created an admin (x@y.local)
+    # who could never log in. The service now applies the same EmailStr rules.
+    with pytest.raises(ValidationError, match="Invalid email address"):
+        await auth.register(
+            email=email, password="correct-horse-battery", bypass_registration_policy=True
+        )

@@ -23,7 +23,8 @@ def test_settings_read_prefixed_environment(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setenv("NUROFLOW_ENVIRONMENT", "production")
     monkeypatch.setenv("NUROFLOW_SECRET_KEY", "a-real-secret-" + "x" * 40)
     monkeypatch.setenv("NUROFLOW_DATABASE_POOL_SIZE", "25")
-    monkeypatch.setenv("NUROFLOW_METRICS_TOKEN", "m" * 32)
+    for key, value in DEPLOYED.items():
+        monkeypatch.setenv(f"NUROFLOW_{key.upper()}", value)
     settings = Settings(_env_file=None)  # type: ignore[call-arg]
     assert settings.environment is Environment.PRODUCTION
     assert settings.database_pool_size == 25
@@ -41,26 +42,49 @@ def test_deployed_environments_reject_the_dev_secret(environment: str) -> None:
         Settings(_env_file=None, environment=environment)  # type: ignore[call-arg, arg-type]
 
 
-def test_deployed_environment_accepts_a_real_secret() -> None:
-    settings = Settings(  # type: ignore[call-arg]
-        _env_file=None,
-        environment="production",
-        secret_key="s" * 48,  # type: ignore[arg-type]
-        metrics_token="m" * 32,  # type: ignore[arg-type]
-    )
-    assert settings.environment.is_deployed
+# A complete, safe production configuration. Each test below breaks exactly one thing.
+DEPLOYED: dict[str, str] = {
+    "secret_key": "s" * 48,
+    "metrics_token": "m" * 32,
+    "database_url": "postgresql+psycopg://nuroflow:Str0ng-db-pass@db:5432/nuroflow",
+    "redis_url": "redis://:Str0ng-redis-pass@redis:6379/0",
+    "encryption_keys": "q2Xfy9VuQbWm1E7bq6l1Hc8b1n2bJ1Jz6kQ0aG9cRKs=",
+}
+
+
+def deployed(**overrides: object) -> Settings:
+    return Settings(_env_file=None, environment="production", **{**DEPLOYED, **overrides})  # type: ignore[arg-type, call-arg]
+
+
+def test_deployed_environment_accepts_a_safe_configuration() -> None:
+    assert deployed().environment.is_deployed
+
+
+@pytest.mark.parametrize(
+    ("override", "message"),
+    [
+        (
+            {"database_url": "postgresql+psycopg://nuroflow:nuroflow@db:5432/nuroflow"},
+            "DATABASE_URL",
+        ),
+        ({"redis_url": "redis://redis:6379/0"}, "REDIS_URL"),
+        ({"celery_broker_url": "redis://redis:6379/1"}, "REDIS_URL"),
+        ({"encryption_keys": ""}, "ENCRYPTION_KEYS"),
+        ({"cors_origins": "*"}, "CORS_ORIGINS"),
+        ({"llm_mode": "simulated"}, "must be 'live'"),
+    ],
+)
+def test_deployed_environment_rejects_each_unsafe_default(
+    override: dict[str, object], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        deployed(**override)
 
 
 def test_deployed_metrics_need_a_token_unless_disabled() -> None:
     with pytest.raises(ValueError, match="NUROFLOW_METRICS_TOKEN"):
-        Settings(_env_file=None, environment="production", secret_key="s" * 48)  # type: ignore[call-arg, arg-type]
-    settings = Settings(  # type: ignore[call-arg]
-        _env_file=None,
-        environment="production",
-        secret_key="s" * 48,  # type: ignore[arg-type]
-        metrics_enabled=False,
-    )
-    assert not settings.metrics_enabled
+        deployed(metrics_token=None)
+    assert not deployed(metrics_token=None, metrics_enabled=False).metrics_enabled
 
 
 def test_cors_origins_accept_comma_separated_env(monkeypatch: pytest.MonkeyPatch) -> None:

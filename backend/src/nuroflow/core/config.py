@@ -17,6 +17,7 @@ import hmac
 from enum import StrEnum
 from functools import lru_cache
 from typing import Annotated, Literal, Self
+from urllib.parse import urlsplit
 
 from pydantic import Field, PostgresDsn, RedisDsn, SecretStr, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -185,6 +186,18 @@ class Settings(BaseSettings):
             problems.append(
                 "NUROFLOW_LLM_MODE and NUROFLOW_TELEGRAM_MODE must be 'live' when deployed"
             )
+        # Phase 7 hardening: the defaults that make local dev frictionless are the
+        # classic production foot-guns.
+        db = urlsplit(str(self.database_url))
+        if db.password in (None, "", "nuroflow"):
+            problems.append("NUROFLOW_DATABASE_URL must use a non-default password")
+        if not urlsplit(self.broker_url).password or not urlsplit(str(self.redis_url)).password:
+            # Anyone who can reach an open Redis can enqueue Celery messages.
+            problems.append("NUROFLOW_REDIS_URL (and broker) must require a password")
+        if not self.encryption_keys:
+            # Derived keys would tie stored credentials to SECRET_KEY: rotating the JWT
+            # secret would silently make every connection undecryptable.
+            problems.append("NUROFLOW_ENCRYPTION_KEYS must be set explicitly when deployed")
         if self.http_allow_private_networks:
             problems.append(
                 "NUROFLOW_HTTP_ALLOW_PRIVATE_NETWORKS must be false when deployed (SSRF)"

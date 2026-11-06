@@ -6,7 +6,8 @@ BACKEND      := cd backend &&
 RUN          := $(BACKEND) uv run
 
 .PHONY: help install up down nuke logs migrate migration downgrade sql db-shell api worker scheduler admin \
-        test test-unit test-integration lint format typecheck check observe web web-install web-test web-build
+        test test-unit test-integration lint format typecheck check observe web web-install web-test web-build \
+        prod-secrets prod-build prod-up prod-down prod-admin prod-logs prod-ps smoke
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -99,3 +100,33 @@ web-test: ## Dashboard type check + unit tests
 
 web-build: ## Production build into frontend/dist
 	cd frontend && npm run build
+
+# ---- Production stack (docker-compose.yml) --------------------------------- #
+COMPOSE_PROD := docker compose --env-file .env.prod -f docker-compose.yml
+
+prod-secrets: ## Generate .env.prod with fresh secrets (refuses to overwrite): make prod-secrets domain=flow.example.com
+	@test ! -f .env.prod || (echo ".env.prod exists: refusing to overwrite (encryption keys!)" && exit 1)
+	@python3 deploy/generate-secrets.py --domain "$(or $(domain),localhost)" > .env.prod && chmod 600 .env.prod
+	@echo ".env.prod written (mode 600). Back it up somewhere safe."
+
+prod-build: ## Build the backend and web images
+	$(COMPOSE_PROD) build
+
+prod-up: ## Build, migrate and start the production stack
+	$(COMPOSE_PROD) up -d --build --wait
+
+prod-down: ## Stop the production stack (data volumes kept)
+	$(COMPOSE_PROD) down
+
+prod-admin: ## Create the first admin: make prod-admin email=you@example.com
+	@test -n "$(email)" || (echo 'usage: make prod-admin email=you@example.com' && exit 1)
+	$(COMPOSE_PROD) run --rm -it api nuroflow create-admin --email "$(email)"
+
+prod-logs: ## Follow production logs
+	$(COMPOSE_PROD) logs -f --tail=100
+
+prod-ps: ## Show service status and health
+	$(COMPOSE_PROD) ps
+
+smoke: ## End-to-end smoke test against a running stack (BASE_URL, SMOKE_EMAIL, SMOKE_PASSWORD)
+	python3 deploy/smoke.py

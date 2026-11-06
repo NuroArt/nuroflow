@@ -1,0 +1,178 @@
+# CI: every push and PR runs the full quality gate. A weekly scheduled run rebuilds and
+# rescans the images, so newly published CVEs in base images are caught even when no
+# code changed.
+#
+# Supply chain: every third-party action is pinned to a commit SHA (a tag can be
+# re-pointed by an attacker; a SHA can't). Dependabot keeps the pins current.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 6 * * 1"        # Mondays 06:17 UTC: rebuild and rescan
+  workflow_dispatch:
+
+permissions:
+  contents: read                # least privilege; jobs widen only what they need
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  UV_FROZEN: "1"
+  PYTHON_VERSION: "3.12"
+
+jobs:
+  backend:
+    name: Backend (lint, types, tests ≥85% coverage, migrations)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16.6-alpine
+        env:
+          POSTGRES_USER: nuroflow
+          POSTGRES_PASSWORD: nuroflow
+          POSTGRES_DB: nuroflow
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U nuroflow" --health-interval 5s
+          --health-timeout 3s --health-retries 20
+      redis:
+        image: redis:7.4-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s
+          --health-timeout 3s --health-retries 20
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: astral-sh/setup-uv@887a942a15af3a7626099df99e897a18d9e5ab3a # v5.1.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: backend/uv.lock
+      - run: uv python install ${{ env.PYTHON_VERSION }}
+      - run: uv sync
+      - name: Lint
+        run: uv run ruff check . && uv run ruff format --check .
+      - name: Type check
+        run: uv run mypy
+      - name: Tests (coverage gate in pyproject.toml)
+        run: uv run pytest --cov --cov-report=term-missing --cov-report=xml
+      - name: Migrations match the models
+        run: uv run alembic upgrade head && uv run alembic check
+      - uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4.5.0
+        if: always()
+        with:
+          name: coverage-xml
+          path: backend/coverage.xml
+          retention-days: 14
+
+  frontend:
+    name: Dashboard (types, tests, build)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+
+  security:
+    name: Security (dependencies, secrets)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0          # gitleaks scans the whole history
+      - uses: astral-sh/setup-uv@887a942a15af3a7626099df99e897a18d9e5ab3a # v5.1.0
+      - name: Python dependencies (pip-audit)
+        working-directory: backend
+        run: |
+          uv export --no-dev --no-hashes --no-emit-project --format requirements-txt > /tmp/requirements.txt
+          uvx pip-audit --strict -r /tmp/requirements.txt
+      - uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4.1.0
+        with:
+          node-version: 22
+      - name: Shipped JS dependencies (npm audit)
+        working-directory: frontend
+        # Gate on what reaches users. Dev-tool advisories are handled by Dependabot PRs.
+        run: npm audit --omit=dev --audit-level=high
+      - name: Secrets in history (gitleaks)
+        uses: gitleaks/gitleaks-action@83373cf2f8c4db6e24b41c1a9b086bb9619e9cd3 # v2.3.7
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  images:
+    name: Images (build, CVE scan, production smoke test)
+    needs: [backend, frontend]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: docker/setup-buildx-action@6524bf65af31da8d45b59e8c27de4bd072b392f5 # v3.8.0
+      - name: Build backend
+        uses: docker/build-push-action@48aba3b46d1b1fec4febb7c5d0c644b249a11355 # v6.10.0
+        with:
+          context: backend
+          load: true
+          tags: nuroflow-backend:ci
+          cache-from: type=gha,scope=backend
+          cache-to: type=gha,mode=max,scope=backend
+      - name: Build web
+        uses: docker/build-push-action@48aba3b46d1b1fec4febb7c5d0c644b249a11355 # v6.10.0
+        with:
+          context: frontend
+          load: true
+          tags: nuroflow-web:ci
+          cache-from: type=gha,scope=web
+          cache-to: type=gha,mode=max,scope=web
+      - name: CVE scan backend (fail on fixable HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.33.1
+        with:
+          image-ref: nuroflow-backend:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: CVE scan web
+        uses: aquasecurity/trivy-action@b6643a29fecd7f34b3597bc6acb0a98b03d33ff8 # v0.33.1
+        with:
+          image-ref: nuroflow-web:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Start the production stack
+        env:
+          NUROFLOW_TAG: ci
+        run: |
+          python3 deploy/generate-secrets.py > .env.prod
+          docker compose --env-file .env.prod up -d --wait --wait-timeout 180
+      - name: Smoke test through the public edge
+        env:
+          NUROFLOW_TAG: ci
+        run: |
+          export SMOKE_PASSWORD="$(python3 -c 'import secrets; print(secrets.token_urlsafe(18))')"
+          docker compose --env-file .env.prod run --rm -e NUROFLOW_ADMIN_PASSWORD="$SMOKE_PASSWORD" \
+            api nuroflow create-admin --email smoke@nuroworks.com
+          BASE_URL=http://localhost:8080 SMOKE_EMAIL=smoke@nuroworks.com python3 deploy/smoke.py
+      - name: Service logs on failure
+        if: failure()
+        run: docker compose --env-file .env.prod logs --tail=200
+      - name: Tear down
+        if: always()
+        run: docker compose --env-file .env.prod down -v

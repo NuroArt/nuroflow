@@ -1,0 +1,17 @@
+# Automatic HTTPS (Let's Encrypt) in front of the nuroflow `web` container.
+# Set DOMAIN (e.g. flow.nuroworks.com, with DNS pointing here) and ACME_EMAIL in .env.prod.
+{
+	email {$ACME_EMAIL}
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=63072000; includeSubDomains"
+		-Server
+	}
+	reverse_proxy web:8080 {
+		header_up X-Forwarded-Proto {scheme}
+		flush_interval -1    # stream SSE immediately
+	}
+}

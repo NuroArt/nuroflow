@@ -22,6 +22,9 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
+from pydantic import EmailStr, TypeAdapter
+from pydantic import ValidationError as PydanticValidationError
+
 from nuroflow.core.clock import Clock
 from nuroflow.core.exceptions import (
     AuthenticationError,
@@ -75,6 +78,23 @@ def normalize_email(email: str) -> str:
     return email.strip().lower()
 
 
+_EMAIL = TypeAdapter(EmailStr)
+
+
+def validate_email(email: str) -> str:
+    """Apply the same rules as the API's ``EmailStr`` schemas.
+
+    The service validates too, because not every caller goes through the HTTP schema:
+    ``nuroflow create-admin`` once created an admin with a reserved-domain address
+    (``admin@x.local``) that the login endpoint then rejected, locking the admin out.
+    """
+    try:
+        return normalize_email(_EMAIL.validate_python(email.strip()))
+    except PydanticValidationError as exc:
+        reason = str(exc.errors()[0].get("msg", "invalid email address"))
+        raise ValidationError(f"Invalid email address: {reason}", field="email") from None
+
+
 class AuthService:
     def __init__(
         self,
@@ -103,7 +123,7 @@ class AuthService:
     ) -> User:
         if not (self._policy.registration_enabled or bypass_registration_policy):
             raise FeatureDisabled("Self-service registration is disabled")
-        email = normalize_email(email)
+        email = validate_email(email)
         self._validate_password(password, email=email)
         if await self._uow.users.get_by_email(email) is not None:
             raise Conflict("An account with this email already exists", field="email")

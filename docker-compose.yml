@@ -1,0 +1,209 @@
+# NuroFlow production stack (single host). Secrets come from .env.prod:
+#
+#   make prod-secrets        # writes .env.prod with fresh random secrets (never commit it)
+#   make prod-up             # build, migrate, start everything
+#   make prod-admin email=you@example.com
+#
+# Only `web` publishes a port. Postgres, Redis, the API and metrics ports stay on the
+# internal network. Put TLS in front with the `tls` profile (Caddy, automatic HTTPS)
+# or your cloud load balancer.
+
+name: nuroflow
+
+x-hardened: &hardened
+  restart: unless-stopped
+  read_only: true                       # immutable root filesystem
+  tmpfs: ["/tmp:size=64m,mode=1777"]    # scratch space incl. multiprocess metrics
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: [ALL]
+  logging:
+    driver: json-file
+    options: { max-size: "20m", max-file: "5" }
+
+x-backend: &backend
+  <<: *hardened
+  image: ${NUROFLOW_IMAGE:-nuroflow-backend}:${NUROFLOW_TAG:-latest}
+  build:
+    context: ./backend
+  env_file: .env.prod
+  environment: &backend-env
+    NUROFLOW_ENVIRONMENT: production
+    NUROFLOW_DATABASE_URL: postgresql+psycopg://nuroflow:${POSTGRES_PASSWORD:?run make prod-secrets}@postgres:5432/nuroflow
+    NUROFLOW_REDIS_URL: redis://:${REDIS_PASSWORD:?run make prod-secrets}@redis:6379/0
+  depends_on: &backend-deps
+    migrate: { condition: service_completed_successfully }
+    redis: { condition: service_healthy }
+
+services:
+  postgres:
+    <<: *hardened
+    image: postgres:16.6-alpine
+    read_only: false                    # the official image writes to /var/run at start
+    cap_drop: []                        # entrypoint needs chown/setuid to drop to postgres
+    environment:
+      POSTGRES_USER: nuroflow
+      POSTGRES_DB: nuroflow
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run make prod-secrets}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C.UTF-8 --auth-host=scram-sha-256"
+      TZ: UTC
+    volumes: [postgres-data:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nuroflow -d nuroflow"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    shm_size: 256m
+
+  redis:
+    <<: *hardened
+    image: redis:7.4-alpine
+    read_only: false
+    cap_drop: []
+    # Broker only (ADR-0001): Postgres is the source of truth, so noeviction plus
+    # AOF is about not dropping messages under memory pressure, not about durability.
+    command: >
+      redis-server --requirepass "${REDIS_PASSWORD:?run make prod-secrets}"
+      --appendonly yes --maxmemory 256mb --maxmemory-policy noeviction
+    environment:
+      REDISCLI_AUTH: ${REDIS_PASSWORD}
+    volumes: [redis-data:/data]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # One-shot job: every other backend service waits for it to exit 0. An advisory lock
+  # in alembic/env.py makes concurrent runs safe.
+  migrate:
+    <<: *backend
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    depends_on:
+      postgres: { condition: service_healthy }
+    healthcheck: { disable: true }
+
+  api:
+    <<: *backend
+    # One Uvicorn process per container: scale with replicas, not workers, so each
+    # container's /metrics describes exactly one process.
+    command: ["nuroflow-api", "--host", "0.0.0.0", "--proxy-headers", "--forwarded-allow-ips", "*"]
+    deploy:
+      replicas: ${API_REPLICAS:-2}
+      resources: { limits: { cpus: "1.0", memory: 512m } }
+    healthcheck:
+      test: ["CMD", "nuroflow", "healthcheck", "api"]
+      interval: 15s
+      timeout: 3s
+      start_period: 20s
+      retries: 3
+
+  # Separate worker pools per queue: a flood of slow LLM calls can never starve
+  # alerts or quick tasks (bulkhead pattern).
+  worker:
+    <<: *backend
+    command: ["nuroflow-worker", "-Q", "default,notifications", "-c", "4"]
+    stop_grace_period: 2m               # let in-flight tasks finish (acks_late covers the rest)
+    deploy:
+      resources: { limits: { cpus: "2.0", memory: 1g } }
+    healthcheck:
+      test: ["CMD", "nuroflow", "healthcheck", "worker"]
+      interval: 30s
+      timeout: 3s
+      start_period: 30s
+      retries: 3
+
+  worker-ai:
+    <<: *backend
+    command: ["nuroflow-worker", "-Q", "ai", "-c", "2"]
+    stop_grace_period: 5m
+    deploy:
+      resources: { limits: { cpus: "1.0", memory: 1g } }
+    healthcheck:
+      test: ["CMD", "nuroflow", "healthcheck", "worker"]
+      interval: 30s
+      timeout: 3s
+      start_period: 30s
+      retries: 3
+
+  # Two replicas on purpose: SKIP LOCKED makes them cooperate (ADR-0002), so losing
+  # one costs nothing.
+  scheduler:
+    <<: *backend
+    command: ["nuroflow-scheduler"]
+    deploy:
+      replicas: ${SCHEDULER_REPLICAS:-2}
+      resources: { limits: { cpus: "0.5", memory: 256m } }
+    healthcheck:
+      test: ["CMD", "nuroflow", "healthcheck", "scheduler"]
+      interval: 30s
+      timeout: 3s
+      start_period: 30s
+      retries: 3
+
+  web:
+    <<: *hardened
+    image: ${NUROFLOW_WEB_IMAGE:-nuroflow-web}:${NUROFLOW_TAG:-latest}
+    build:
+      context: ./frontend
+    tmpfs: ["/tmp:size=16m", "/var/cache/nginx:size=32m"]
+    ports: ["${HTTP_BIND:-127.0.0.1}:${HTTP_PORT:-8080}:8080"]
+    depends_on:
+      api: { condition: service_healthy }
+
+  # ---- optional: automatic HTTPS (docker compose --profile tls up -d) ----------- #
+  caddy:
+    <<: *hardened
+    image: caddy:2.8-alpine
+    profiles: ["tls"]
+    read_only: false
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    environment:
+      DOMAIN: ${DOMAIN:-localhost}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+    ports: ["80:80", "443:443", "443:443/udp"]
+    volumes:
+      - ./deploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on: [web]
+
+  # ---- optional: metrics (docker compose --profile observability up -d) -------- #
+  prometheus:
+    <<: *hardened
+    image: prom/prometheus:v2.55.1
+    profiles: ["observability"]
+    read_only: false
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=30d"]
+    volumes:
+      - ./deploy/prometheus/prometheus.prod.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deploy/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus-data:/prometheus
+    secrets: [metrics_token]
+
+  grafana:
+    <<: *hardened
+    image: grafana/grafana:11.3.1
+    profiles: ["observability"]
+    read_only: false
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-change-me}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports: ["127.0.0.1:3000:3000"]      # reach it over an SSH tunnel, not the internet
+    volumes:
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+
+secrets:
+  metrics_token:
+    environment: NUROFLOW_METRICS_TOKEN
+
+volumes:
+  postgres-data:
+  redis-data:
+  caddy-data:
+  caddy-config:
+  prometheus-data:
+  grafana-data:

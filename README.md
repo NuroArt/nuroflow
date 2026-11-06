@@ -1,5 +1,10 @@
 # NuroFlow
 
+[![CI](https://github.com/nuroworks/nuroflow/actions/workflows/ci.yml/badge.svg)](https://github.com/nuroworks/nuroflow/actions/workflows/ci.yml)
+![coverage](https://img.shields.io/badge/coverage-93%25-3d8bff)
+![python](https://img.shields.io/badge/python-3.12-3d8bff)
+![license](https://img.shields.io/badge/license-MIT-3d8bff)
+
 **Durable, AI-native workflow orchestration.** You declare a workflow as a DAG. NuroFlow schedules
 it, retries it, survives crashes, and tells you on Telegram when it's done.
 
@@ -62,7 +67,7 @@ flowchart LR
     W --> X[OpenAI · Anthropic · Telegram · HTTP]
 ```
 
-Full design: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** · Schema: **[docs/DATABASE.md](docs/DATABASE.md)** · Auth: **[docs/AUTH.md](docs/AUTH.md)** · Engine: **[docs/ENGINE.md](docs/ENGINE.md)** · Scheduler: **[docs/SCHEDULER.md](docs/SCHEDULER.md)** · Integrations: **[docs/INTEGRATIONS.md](docs/INTEGRATIONS.md)** · Observability: **[docs/OBSERVABILITY.md](docs/OBSERVABILITY.md)** · Decisions: **[docs/adr/](docs/adr/)**
+Full design: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** · Schema: **[docs/DATABASE.md](docs/DATABASE.md)** · Auth: **[docs/AUTH.md](docs/AUTH.md)** · Engine: **[docs/ENGINE.md](docs/ENGINE.md)** · Scheduler: **[docs/SCHEDULER.md](docs/SCHEDULER.md)** · Integrations: **[docs/INTEGRATIONS.md](docs/INTEGRATIONS.md)** · Observability: **[docs/OBSERVABILITY.md](docs/OBSERVABILITY.md)** · Deployment: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** · Decisions: **[docs/adr/](docs/adr/)**
 
 ## Quick start
 
@@ -80,6 +85,31 @@ Then import and run the reference workflow: see [docs/ENGINE.md](docs/ENGINE.md#
 
 See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for details.
 
+## Deploy
+
+```bash
+make prod-secrets domain=flow.example.com   # fresh random secrets → .env.prod
+make prod-up                                # build → migrate → api ×2, workers, scheduler ×2, web
+make prod-admin email=you@example.com
+```
+
+Hardened by default: non-root, read-only containers with no Linux capabilities; a strict-CSP
+same-origin edge; and a config that **refuses to start** with dev secrets, default passwords or an
+open Redis. Images ship with zero fixable HIGH/CRITICAL CVEs at release, gated by Trivy.
+Runbook: **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** · Security: **[SECURITY.md](SECURITY.md)**
+
+## Quality gates (CI on every push)
+
+| Gate | Tooling |
+|---|---|
+| Lint, format, strict types | Ruff, mypy `--strict`, `tsc` |
+| Tests | 352 backend (unit + integration on real Postgres/Redis, a real Celery worker, chaos tests) at **≥85% enforced**, plus 18 dashboard tests |
+| Schema drift | `alembic check` |
+| Dependencies and secrets | pip-audit, npm audit (shipped deps), gitleaks over full history |
+| Images | Trivy: fail on fixable HIGH/CRITICAL; rebuilt and rescanned weekly |
+| Production smoke test | the real Compose stack is started in CI and checked through the edge (18 checks) |
+| Releases | `v*` tags → multi-arch images on GHCR with SBOM + SLSA provenance |
+
 ## Tech stack
 
 Python 3.12 · FastAPI · SQLAlchemy 2.0 · PostgreSQL 16 · Alembic · Celery · Redis · JWT/Argon2 ·
@@ -95,7 +125,7 @@ OpenAI · Anthropic · Telegram Bot API · React + Tailwind · Docker · GitHub 
 | 4 | Scheduler: cron, retries, reaper, timeouts, events & webhooks | ✅ Done |
 | 5 | Telegram, OpenAI, Anthropic, notification service | ✅ Done |
 | 6 | Logging, metrics, SSE log tail, React dashboard | ✅ Done |
-| 7 | Production Docker, hardening, CI/CD, test suite ≥ 85% | ⏳ Next |
+| 7 | Production Docker, hardening, CI/CD, test suite ≥ 85% | ✅ Done |
 
 ## Project layout
 
@@ -103,7 +133,11 @@ OpenAI · Anthropic · Telegram Bot API · React + Tailwind · Docker · GitHub 
 backend/src/nuroflow/   core · domain · db · repositories · services · api · engine
                         operators · scheduler · workers · integrations · notifications · observability
 backend/tests/          unit (no I/O) · integration (real Postgres)
-docs/                   architecture, database, development guide, ADRs
+frontend/               React dashboard (Vite, TypeScript, Tailwind, React Flow)
+deploy/                 secrets generator, smoke test, Caddy, Prometheus rules, Grafana
+.github/                CI, release and Dependabot
+docs/                   architecture, database, engine, scheduler, integrations,
+                        observability, deployment runbook, ADRs 0001–0007
 examples/workflows/     ready-to-import workflow definitions
 ```
 
