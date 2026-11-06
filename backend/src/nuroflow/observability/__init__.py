@@ -1,1 +1,1 @@
-"""structlog configuration and Prometheus metrics (Phase 6)."""
+"""Observability: Prometheus metrics, DB-derived gauges and process metric servers."""

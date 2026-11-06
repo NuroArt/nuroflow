@@ -36,6 +36,7 @@ from nuroflow.engine.retry import RetryPolicy
 from nuroflow.integrations.http_errors import is_retryable_status
 from nuroflow.integrations.telegram.base import TelegramClient, TelegramError, TelegramMessage
 from nuroflow.notifications.formatting import telegram_html
+from nuroflow.observability import metrics
 from nuroflow.operators.base import TaskError
 from nuroflow.operators.builtin.http import assert_public_url
 from nuroflow.services.ingest import sign_webhook
@@ -214,7 +215,15 @@ class NotificationDeliverer:
             )
         except DeliveryError as exc:
             error = exc
-        return self._record(claim, error)
+        status = self._record(claim, error)
+        if status is not None:
+            outcome = (
+                "sent" if error is None else "retrying" if status.value == "pending" else "failed"
+            )
+            metrics.NOTIFICATIONS.labels(
+                channel_type=prepared.channel_type.value, outcome=outcome
+            ).inc()
+        return status
 
     # ---- T1: load everything, then release the connection -------------- #
     def _prepare(self, claim: DeliveryClaim) -> _Prepared | None:

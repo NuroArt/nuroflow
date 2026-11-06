@@ -29,9 +29,11 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from nuroflow.core.clock import Clock
 from nuroflow.core.config import Settings
+from nuroflow.core.logging import bind_log_context
 from nuroflow.engine.dispatch import EnqueueRequest, TaskDispatcher
 from nuroflow.engine.orchestrator import Orchestrator
 from nuroflow.notifications.delivery import NotificationSender
+from nuroflow.observability import metrics
 from nuroflow.scheduler.jobs import SchedulerConfig, SchedulerJobs
 
 logger = logging.getLogger(__name__)
@@ -73,17 +75,23 @@ class Scheduler:
         report = TickReport()
         started = time.perf_counter()
         for name, job in self._job_order:
-            try:
-                requests = job()
-            except Exception as exc:
-                logger.exception("scheduler job failed", extra={"job": name})
-                report.errors[name] = f"{type(exc).__name__}: {exc}"
-                continue
-            if requests:
-                self._dispatcher.enqueue(requests)  # after the job's commit
+            with bind_log_context(job=name):
+                try:
+                    requests = job()
+                except Exception as exc:
+                    logger.exception("scheduler job failed")
+                    metrics.SCHEDULER_JOB_ERRORS.labels(job=name).inc()
+                    report.errors[name] = f"{type(exc).__name__}: {exc}"
+                    continue
+                if requests:
+                    self._dispatcher.enqueue(requests)  # after the job's commit
+                    metrics.SCHEDULER_DISPATCHED.labels(job=name).inc(len(requests))
             report.by_job[name] = len(requests)
             report.dispatched += len(requests)
-        report.duration_ms = round((time.perf_counter() - started) * 1000, 2)
+        elapsed = time.perf_counter() - started
+        report.duration_ms = round(elapsed * 1000, 2)
+        metrics.SCHEDULER_TICK.observe(elapsed)
+        metrics.SCHEDULER_LAST_TICK.set_to_current_time()
         return report
 
     def run_forever(self) -> None:

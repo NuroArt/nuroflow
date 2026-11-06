@@ -1,0 +1,25 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html { color-scheme: dark; }
+  body { font-feature-settings: "cv11", "ss01"; }
+  :focus-visible { outline: 2px solid #3d8bff; outline-offset: 2px; }
+}
+
+@layer components {
+  .card { @apply rounded-xl border border-line bg-surface-1; }
+  .btn { @apply inline-flex items-center gap-2 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-50; }
+  .btn-primary { @apply btn bg-accent text-white hover:bg-accent-strong; }
+  .btn-ghost { @apply btn border border-line text-ink-muted hover:border-accent/60 hover:text-ink; }
+  .label { @apply text-xs font-medium uppercase tracking-wider text-ink-faint; }
+  .input { @apply w-full rounded-lg border border-line bg-surface-2 px-3 py-2 text-sm text-ink placeholder:text-ink-faint focus:border-accent focus:outline-none; }
+  .th { @apply px-4 py-2 text-left text-xs font-medium uppercase tracking-wider text-ink-faint; }
+  .td { @apply px-4 py-2.5 text-sm; }
+}
+
+/* React Flow, themed for the dark surface. */
+.react-flow__attribution { display: none; }
+.react-flow__edge-path { stroke: #2b3850; stroke-width: 1.5; }
+.react-flow__controls button { background: #121826; border-color: #1f2939; fill: #9aa4b5; }

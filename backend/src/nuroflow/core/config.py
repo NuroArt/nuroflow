@@ -138,6 +138,16 @@ class Settings(BaseSettings):
     llm_pricing: dict[str, dict[str, float]] = Field(default_factory=dict)
     notification_max_attempts: int = Field(default=5, ge=1, le=20)
 
+    # ---- observability (Phase 6) ------------------------------------------ #
+    metrics_enabled: bool = True
+    # When set, /metrics requires "Authorization: Bearer <token>". Required when deployed:
+    # metrics reveal traffic, queue sizes and spend.
+    metrics_token: SecretStr | None = None
+    worker_metrics_port: int = Field(default=9101, ge=0, le=65535)  # 0 = disabled
+    scheduler_metrics_port: int = Field(default=9102, ge=0, le=65535)
+    sse_poll_seconds: float = Field(default=1.0, gt=0, le=10)
+    sse_max_stream_seconds: int = Field(default=1800, ge=10, le=86_400)
+
     # --------------------------------------------------------------------- #
     @model_validator(mode="before")
     @classmethod
@@ -169,6 +179,8 @@ class Settings(BaseSettings):
             problems.append("NUROFLOW_SECRET_KEY must be set to a random value of 32+ characters")
         if "*" in self.cors_origins:
             problems.append("NUROFLOW_CORS_ORIGINS must not contain '*' when deployed")
+        if self.metrics_enabled and self.metrics_token is None:
+            problems.append("NUROFLOW_METRICS_TOKEN is required when metrics are enabled")
         if self.llm_mode == "simulated" or self.telegram_mode == "simulated":
             problems.append(
                 "NUROFLOW_LLM_MODE and NUROFLOW_TELEGRAM_MODE must be 'live' when deployed"

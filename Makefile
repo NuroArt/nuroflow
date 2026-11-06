@@ -6,7 +6,7 @@ BACKEND      := cd backend &&
 RUN          := $(BACKEND) uv run
 
 .PHONY: help install up down nuke logs migrate migration downgrade sql db-shell api worker scheduler admin \
-        test test-unit test-integration lint format typecheck check
+        test test-unit test-integration lint format typecheck check observe web web-install web-test web-build
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | \
@@ -24,6 +24,9 @@ up: ## Start Postgres + Redis and wait until healthy
 
 down: ## Stop dev services (keeps data)
 	$(COMPOSE_DEV) down
+
+observe: ## Start Prometheus (:9090) + Grafana (:3000) scraping the local api/worker/scheduler
+	$(COMPOSE_DEV) --profile observability up -d
 
 nuke: ## Stop dev services and DELETE all local data
 	$(COMPOSE_DEV) down -v
@@ -81,5 +84,18 @@ format: ## Auto-format and auto-fix with Ruff
 typecheck: ## Type-check with mypy (strict)
 	$(RUN) mypy
 
-check: lint typecheck test ## Everything CI runs
+check: lint typecheck test ## Everything CI runs (backend)
 	$(RUN) alembic check
+
+# ---- Dashboard (frontend/) ------------------------------------------------- #
+web-install: ## Install dashboard dependencies (exact versions from package-lock.json)
+	cd frontend && npm ci
+
+web: ## Run the dashboard on http://localhost:5173 (proxies /api to :8000)
+	cd frontend && npm run dev
+
+web-test: ## Dashboard type check + unit tests
+	cd frontend && npm run lint && npm test
+
+web-build: ## Production build into frontend/dist
+	cd frontend && npm run build

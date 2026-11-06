@@ -371,7 +371,7 @@ the next future time; `true` backfills each missed slot (bounded by `max_active_
 | **Jinja2 sandbox** | Familiar templating with a hardened sandbox | JMESPath (safer but too limited for string building) |
 | **Telegram Bot API (httpx)** | Zero-cost, instant mobile alerts; simple HTTPS API | Slack (paid workspaces), email (slow, deliverability work) |
 | **OpenAI + Anthropic SDKs** | Behind one `LLMProvider` Protocol → swap per task, failover, fake provider in tests | LangChain (heavy abstraction; hides what we want to demonstrate) |
-| **structlog + Prometheus** | JSON logs with bound context (`run_id`, `task_run_id`); standard metrics scraping | OpenTelemetry (planned add-on for traces in Phase 6) |
+| **stdlib logging + contextvars, Prometheus** | JSON logs with bound context (`run_id`, `task_run_id`); standard metrics scraping. *Phase 6 dropped structlog: every library logs via stdlib and output is identical (see OBSERVABILITY.md)* | structlog; OpenTelemetry traces (future add-on) |
 | **Docker + Compose** | One image, four entrypoints; reproducible dev = prod parity | Kubernetes manifests (roadmap; Compose is the honest scope for a portfolio) |
 | **uv** | 10–100× faster installs, lockfile, single tool for venvs | Poetry (slower), pip-tools (more moving parts) |
 | **Ruff + mypy (strict) + pytest** | Lint/format in one tool; strict typing catches DI mistakes early | Black + isort + flake8 (three tools doing what Ruff does) |
@@ -504,7 +504,7 @@ nuroflow/
 │   │   ├── workers/              # Celery app, task entrypoints, container    (P3)
 │   │   ├── integrations/         # telegram/, llm/ (OpenAI, Anthropic, fake)  (P5)
 │   │   ├── notifications/        # Channel dispatch + delivery tracking       (P5)
-│   │   └── observability/        # structlog setup, Prometheus metrics        (P6)
+│   │   └── observability/        # Prometheus metrics, DB gauges, metric servers (P6)
 │   └── tests/
 │       ├── unit/                 # Pure, fast, no I/O
 │       └── integration/          # Real Postgres/Redis (CI services)

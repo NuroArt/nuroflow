@@ -20,6 +20,7 @@ Reliability settings (and why):
 from __future__ import annotations
 
 import logging
+import os
 import threading
 import uuid
 
@@ -28,6 +29,7 @@ from celery.signals import worker_process_init, worker_process_shutdown
 from nuroflow.core.config import get_settings
 from nuroflow.engine.dispatch import EXECUTE_TASK_RUN, CeleryDispatcher
 from nuroflow.notifications.delivery import DELIVER_NOTIFICATION, DeliveryClaim
+from nuroflow.observability.servers import mark_child_dead
 from nuroflow.workers.app_factory import create_celery_app
 from nuroflow.workers.container import WorkerContainer, build_worker_container
 
@@ -63,9 +65,10 @@ def _reset_after_fork(**_: object) -> None:
 
 
 @worker_process_shutdown.connect
-def _close_container(**_: object) -> None:
+def _close_container(pid: int | None = None, **_: object) -> None:
     if _container is not None:
         _container.close()
+    mark_child_dead(pid or os.getpid())
 
 
 @celery_app.task(name=EXECUTE_TASK_RUN)

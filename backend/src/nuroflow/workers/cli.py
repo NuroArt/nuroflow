@@ -14,6 +14,15 @@ from nuroflow.core.logging import configure_logging
 def run() -> None:
     settings = get_settings()
     configure_logging(level=settings.log_level, json_output=settings.log_json)
+    if settings.worker_metrics_port:
+        # Order matters: the env var must exist before prometheus_client is imported
+        # (by servers, by the app, by anything). See observability/multiproc.py.
+        from nuroflow.observability.multiproc import prepare_multiprocess_dir
+
+        prepare_multiprocess_dir()
+        from nuroflow.observability.servers import serve_multiprocess
+
+        serve_multiprocess(settings.worker_metrics_port)
     from nuroflow.workers.celery_app import celery_app
 
     argv = ["worker", f"--loglevel={settings.log_level}"]

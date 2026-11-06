@@ -14,6 +14,7 @@ from nuroflow.engine.data_store import UnavailableDataStore
 from nuroflow.engine.dispatch import CeleryDispatcher
 from nuroflow.integrations.factory import build_llm_providers, build_telegram_client
 from nuroflow.notifications.delivery import CelerySender
+from nuroflow.observability.servers import serve_single_process
 from nuroflow.operators.registry import build_registry
 from nuroflow.scheduler.service import build_scheduler
 from nuroflow.workers.app_factory import create_celery_app
@@ -22,6 +23,8 @@ from nuroflow.workers.app_factory import create_celery_app
 def run() -> None:
     settings = get_settings()
     configure_logging(level=settings.log_level, json_output=settings.log_json)
+    if settings.scheduler_metrics_port:
+        serve_single_process(settings.scheduler_metrics_port)
     engine = create_sync_db_engine(settings)
     celery = create_celery_app(settings)
     # The registry is only consulted for default queues; operators never execute here.

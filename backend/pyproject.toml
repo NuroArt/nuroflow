@@ -37,6 +37,7 @@ dependencies = [
     "pyyaml>=6.0,<7",
     # Phase 4: scheduler, webhooks (secret encryption)
     "cryptography>=43,<47",
+    "prometheus-client>=0.21,<1",
 ]
 
 [dependency-groups]

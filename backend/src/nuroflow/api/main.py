@@ -24,6 +24,7 @@ from nuroflow import __version__
 from nuroflow.api.container import AppContainer, build_container
 from nuroflow.api.errors import register_exception_handlers
 from nuroflow.api.health import router as health_router
+from nuroflow.api.metrics import router as metrics_router
 from nuroflow.api.middleware import RequestContextMiddleware
 from nuroflow.api.v1.router import api_router
 from nuroflow.core.config import Settings, get_settings
@@ -97,6 +98,7 @@ def create_app(
     app.add_middleware(RequestContextMiddleware, hsts=settings.environment.is_deployed)
 
     app.include_router(health_router)
+    app.include_router(metrics_router)
     app.include_router(api_router, prefix=settings.api_v1_prefix)
     return app
 

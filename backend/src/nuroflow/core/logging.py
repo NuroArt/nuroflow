@@ -1,10 +1,17 @@
-"""Logging setup with request correlation.
+"""Logging setup with request and execution correlation.
 
-Phase 2 uses the standard library: plain text locally, single-line JSON when
-``NUROFLOW_LOG_JSON=true``. Every record carries ``request_id`` from a contextvar
-set by the request middleware, so one ``grep`` finds every line of one request.
-Phase 6 upgrades this to structlog with run/task context. The contextvar contract
-stays the same.
+Plain text locally, single-line JSON when ``NUROFLOW_LOG_JSON=true``. Two contextvars
+attach correlation fields to **every** record, including records from Celery,
+SQLAlchemy and httpx, because they're added by a handler filter rather than by callers:
+
+* ``request_id``: set by the API middleware, so one ``grep`` finds a whole request.
+* ``log_context``: bound around a unit of work with :func:`bind_log_context`
+  (``run_id``, ``task_run_id``, ``task_key``, ``operator``, ``attempt``) by the worker,
+  and ``job`` by the scheduler. ``grep run_id=…`` then follows one run across processes.
+
+Why not structlog (the original plan)? Every library we run logs through stdlib, and
+this formatter already emits structured JSON. structlog would add a second logging
+API with no change in output. The decision is recorded in docs/OBSERVABILITY.md.
 """
 
 from __future__ import annotations
@@ -12,18 +19,49 @@ from __future__ import annotations
 import json
 import logging
 import sys
+from collections.abc import Iterator
+from contextlib import contextmanager
 from contextvars import ContextVar
 from datetime import UTC, datetime
 from typing import Any
 
 request_id_ctx: ContextVar[str | None] = ContextVar("request_id", default=None)
+log_context_ctx: ContextVar[dict[str, Any]] = ContextVar("log_context", default={})  # noqa: B039
 
-_RESERVED = set(logging.makeLogRecord({}).__dict__) | {"message", "asctime", "request_id"}
+_RESERVED = set(logging.makeLogRecord({}).__dict__) | {
+    "message",
+    "asctime",
+    "request_id",
+    "ctx_suffix",
+}
+
+
+@contextmanager
+def bind_log_context(**fields: Any) -> Iterator[None]:
+    """Attach ``fields`` to every log record emitted inside the block (nests, async-safe).
+
+    The dict is replaced, never mutated, so the default ``{}`` is never shared state
+    and an inner bind can't leak into the outer scope.
+    """
+    token = log_context_ctx.set({**log_context_ctx.get(), **fields})
+    try:
+        yield
+    finally:
+        log_context_ctx.reset(token)
 
 
 class RequestIdFilter(logging.Filter):
+    """Adds ``request_id`` and bound context fields. Explicit ``extra=`` values win."""
+
     def filter(self, record: logging.LogRecord) -> bool:
         record.request_id = request_id_ctx.get() or "-"
+        context = log_context_ctx.get()
+        for key, value in context.items():
+            if not hasattr(record, key):
+                setattr(record, key, value)
+        record.ctx_suffix = (
+            " " + " ".join(f"{k}={v}" for k, v in context.items()) if context else ""
+        )
         return True
 
 
@@ -48,7 +86,9 @@ def configure_logging(*, level: str = "INFO", json_output: bool = False) -> None
     handler.setFormatter(
         JsonFormatter()
         if json_output
-        else logging.Formatter("%(asctime)s %(levelname)-7s [%(request_id)s] %(name)s: %(message)s")
+        else logging.Formatter(
+            "%(asctime)s %(levelname)-7s [%(request_id)s] %(name)s: %(message)s%(ctx_suffix)s"
+        )
     )
     root = logging.getLogger()
     root.handlers[:] = [handler]

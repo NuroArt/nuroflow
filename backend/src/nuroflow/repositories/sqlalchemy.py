@@ -227,6 +227,76 @@ class SqlAlchemyRunRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._s = session
 
+    async def overview(
+        self, owner_id: uuid.UUID, *, since: datetime, bucket: str
+    ) -> dict[str, Any]:
+        """Dashboard aggregates in four indexed queries. Everything is computed in
+        Postgres; only summary rows cross the wire."""
+        owned = (
+            sa.select(WorkflowRun)
+            .join(Workflow, Workflow.id == WorkflowRun.workflow_id)
+            .where(Workflow.owner_id == owner_id)
+        )
+        window = owned.where(WorkflowRun.created_at >= since).subquery()
+
+        status_rows = await self._s.execute(
+            sa.select(window.c.status, sa.func.count()).group_by(window.c.status)
+        )
+        by_status: dict[Any, int] = {row[0]: row[1] for row in status_rows}
+        seconds = sa.func.extract("epoch", window.c.finished_at - window.c.started_at)
+        p50, p95 = (
+            await self._s.execute(
+                sa.select(
+                    sa.func.percentile_cont(0.5).within_group(seconds),
+                    sa.func.percentile_cont(0.95).within_group(seconds),
+                ).where(window.c.finished_at.is_not(None), window.c.started_at.is_not(None))
+            )
+        ).one()
+        slot = sa.func.date_trunc(bucket, window.c.created_at)
+        series = (
+            await self._s.execute(
+                sa.select(slot.label("slot"), window.c.status, sa.func.count())
+                .group_by(slot, window.c.status)
+                .order_by(slot)
+            )
+        ).all()
+        failed = sa.func.count().filter(window.c.status == RunStatus.FAILED.value)
+        failing = (
+            await self._s.execute(
+                sa.select(Workflow.id, Workflow.name, failed.label("failed"), sa.func.count())
+                .join(window, window.c.workflow_id == Workflow.id)
+                .group_by(Workflow.id, Workflow.name)
+                .having(failed > 0)
+                .order_by(failed.desc(), Workflow.name)
+                .limit(5)
+            )
+        ).all()
+        active = await self._s.scalar(
+            sa.select(sa.func.count()).select_from(
+                owned.where(
+                    WorkflowRun.status.in_([s for s in RunStatus if not s.is_terminal])
+                ).subquery()
+            )
+        )
+        queued = await self._s.scalar(
+            sa.select(sa.func.count())
+            .select_from(TaskRun)
+            .join(WorkflowRun, WorkflowRun.id == TaskRun.workflow_run_id)
+            .join(Workflow, Workflow.id == WorkflowRun.workflow_id)
+            .where(Workflow.owner_id == owner_id, TaskRun.status == TaskStatus.QUEUED)
+        )
+        return {
+            "by_status": {str(getattr(k, "value", k)): v for k, v in by_status.items()},
+            "p50": p50,
+            "p95": p95,
+            "series": [(row[0], str(getattr(row[1], "value", row[1])), row[2]) for row in series],
+            "failing": [
+                {"workflow_id": r[0], "name": r[1], "failed": r[2], "total": r[3]} for r in failing
+            ],
+            "active_runs": active or 0,
+            "queued_tasks": queued or 0,
+        }
+
     async def add(self, run: WorkflowRun) -> None:
         self._s.add(run)
         await self._s.flush()

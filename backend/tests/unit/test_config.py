@@ -23,6 +23,7 @@ def test_settings_read_prefixed_environment(monkeypatch: pytest.MonkeyPatch) -> 
     monkeypatch.setenv("NUROFLOW_ENVIRONMENT", "production")
     monkeypatch.setenv("NUROFLOW_SECRET_KEY", "a-real-secret-" + "x" * 40)
     monkeypatch.setenv("NUROFLOW_DATABASE_POOL_SIZE", "25")
+    monkeypatch.setenv("NUROFLOW_METRICS_TOKEN", "m" * 32)
     settings = Settings(_env_file=None)  # type: ignore[call-arg]
     assert settings.environment is Environment.PRODUCTION
     assert settings.database_pool_size == 25
@@ -45,8 +46,21 @@ def test_deployed_environment_accepts_a_real_secret() -> None:
         _env_file=None,
         environment="production",
         secret_key="s" * 48,  # type: ignore[arg-type]
+        metrics_token="m" * 32,  # type: ignore[arg-type]
     )
     assert settings.environment.is_deployed
+
+
+def test_deployed_metrics_need_a_token_unless_disabled() -> None:
+    with pytest.raises(ValueError, match="NUROFLOW_METRICS_TOKEN"):
+        Settings(_env_file=None, environment="production", secret_key="s" * 48)  # type: ignore[call-arg, arg-type]
+    settings = Settings(  # type: ignore[call-arg]
+        _env_file=None,
+        environment="production",
+        secret_key="s" * 48,  # type: ignore[arg-type]
+        metrics_enabled=False,
+    )
+    assert not settings.metrics_enabled
 
 
 def test_cors_origins_accept_comma_separated_env(monkeypatch: pytest.MonkeyPatch) -> None:

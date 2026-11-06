@@ -9,6 +9,8 @@ from nuroflow.api.v1.endpoints import (
     auth,
     integrations,
     runs,
+    stats,
+    streams,
     triggers,
     users,
     workflows,
@@ -22,3 +24,5 @@ api_router.include_router(workflows.router)
 api_router.include_router(runs.router)
 api_router.include_router(triggers.router)
 api_router.include_router(integrations.router)
+api_router.include_router(streams.router)
+api_router.include_router(stats.router)

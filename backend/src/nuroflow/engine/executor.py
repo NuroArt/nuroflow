@@ -33,6 +33,7 @@ from celery.exceptions import SoftTimeLimitExceeded
 from sqlalchemy.orm import Session, sessionmaker
 
 from nuroflow.core.clock import Clock
+from nuroflow.core.logging import bind_log_context
 from nuroflow.db.models import TaskAttempt
 from nuroflow.domain.enums import AttemptStatus, RunEvent, RunStatus, TaskStatus
 from nuroflow.domain.state import ensure_run_transition, ensure_task_transition
@@ -43,6 +44,7 @@ from nuroflow.engine.retry import RetryPolicy
 from nuroflow.engine.store import EngineStore
 from nuroflow.engine.templating import TemplateRenderer
 from nuroflow.notifications.outbox import emit
+from nuroflow.observability import metrics
 from nuroflow.operators.base import (
     NonRetryableError,
     OperatorContext,
@@ -75,6 +77,7 @@ class _Outcome:
     error: BaseException | None = None
     retryable: bool = False
     duration_ms: int = 0
+    logs_flushed: int = 0  # already persisted live by the heartbeat thread
 
 
 class TaskExecutor:
@@ -101,11 +104,18 @@ class TaskExecutor:
 
     # ------------------------------------------------------------------ #
     def execute(self, task_run_id: uuid.UUID) -> list[EnqueueRequest]:
-        claim = self._claim(task_run_id)
-        if claim is None:
-            return []
-        outcome = self._run_operator(claim)
-        return self._record(task_run_id, claim, outcome)
+        with bind_log_context(task_run_id=str(task_run_id)):
+            claim = self._claim(task_run_id)
+            if claim is None:
+                return []
+            with bind_log_context(
+                run_id=str(claim.ctx.run_id),
+                task_key=claim.ctx.task_key,
+                operator=claim.operator,
+                attempt=claim.attempt,
+            ):
+                outcome = self._run_operator(claim)
+                return self._record(task_run_id, claim, outcome)
 
     # ---- T1 ----------------------------------------------------------- #
     def _claim(self, task_run_id: uuid.UUID) -> _Claim | None:
@@ -196,14 +206,19 @@ class TaskExecutor:
                 claim.raw_inputs, claim.template_context
             )
             operator = self._registry.get(claim.operator)
-            with Heartbeat(
+            heartbeat = Heartbeat(
                 self._sessions,
                 claim.ctx.task_run_id,
                 claim.attempt,
                 clock=self._clock,
                 interval_seconds=self._heartbeat_interval,
-            ):
-                output = operator.run(outcome.rendered_inputs, claim.ctx)
+                logs=claim.ctx.logs,
+            )
+            try:
+                with heartbeat:
+                    output = operator.run(outcome.rendered_inputs, claim.ctx)
+            finally:
+                outcome.logs_flushed = heartbeat.flushed
             outcome.output = self._check_output(output)
         except UnknownOperatorError as exc:
             outcome.error = NonRetryableError(f"operator '{exc.args[0]}' is not installed")
@@ -257,7 +272,7 @@ class TaskExecutor:
             attempt.finished_at = now
             attempt.duration_ms = outcome.duration_ms
             attempt.metrics = claim.ctx.metrics
-            store.add_logs(task.id, claim.attempt, claim.ctx.logs)
+            store.add_logs(task.id, claim.attempt, claim.ctx.logs[outcome.logs_flushed :])
             if outcome.rendered_inputs is not None:
                 task.input = _json_or_none(outcome.rendered_inputs)
 
@@ -305,9 +320,24 @@ class TaskExecutor:
                     },
                 )
 
-            if not task.status.is_terminal:
-                return []
-            return self._orchestrator.advance(store, claim.ctx.run_id)
+            attempt_outcome = (
+                "succeeded"
+                if task.status is TaskStatus.SUCCEEDED
+                else "retrying"
+                if task.status is TaskStatus.UP_FOR_RETRY
+                else "failed"
+            )
+            requests = (
+                self._orchestrator.advance(store, claim.ctx.run_id)
+                if task.status.is_terminal
+                else []
+            )
+            run_finished = run.status if run.status.is_terminal else None
+        # Committed: only now is it true that this attempt happened.
+        record_attempt_metrics(claim.operator, attempt_outcome, outcome.duration_ms, claim.ctx)
+        if run_finished is not None:
+            metrics.RUNS_FINISHED.labels(status=run_finished.value).inc()
+        return requests
 
 
 def _json_or_none(value: Any) -> dict[str, Any] | None:
@@ -316,3 +346,18 @@ def _json_or_none(value: Any) -> dict[str, Any] | None:
     except (TypeError, ValueError):
         return None
     return encoded if isinstance(encoded, dict) else {"value": encoded}
+
+
+def record_attempt_metrics(
+    operator: str, outcome: str, duration_ms: int, ctx: OperatorContext
+) -> None:
+    metrics.TASK_ATTEMPTS.labels(operator=operator, outcome=outcome).inc()
+    metrics.TASK_DURATION.labels(operator=operator).observe(duration_ms / 1000)
+    llm = ctx.metrics.get("llm")
+    if isinstance(llm, dict):
+        provider, model = str(llm.get("provider")), str(llm.get("model"))
+        for kind in ("input", "output"):
+            tokens = llm.get(f"{kind}_tokens") or 0
+            metrics.LLM_TOKENS.labels(provider=provider, model=model, kind=kind).inc(tokens)
+        if llm.get("cost_usd"):
+            metrics.LLM_COST.labels(provider=provider, model=model).inc(llm["cost_usd"])

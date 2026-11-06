@@ -81,7 +81,7 @@ async def list_logs(
     after_id: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=1000)] = 200,
 ) -> LogPage:
-    """Keyset-paginated logs. Poll with the returned next_after_id (SSE arrives in Phase 6)."""
+    """Keyset-paginated logs. For a live tail use ``/task-runs/{id}/logs/stream`` (SSE)."""
     rows = await runs.logs(principal, task_run_id, after_id=after_id, limit=limit)
     items = [LogRead.model_validate(r) for r in rows]
     return LogPage(items=items, next_after_id=items[-1].id if items else after_id)

@@ -16,6 +16,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from nuroflow.core.ids import uuid7
 from nuroflow.core.logging import request_id_ctx
+from nuroflow.observability.metrics import HTTP_DURATION, HTTP_REQUESTS
 
 logger = logging.getLogger("nuroflow.access")
 
@@ -47,11 +48,14 @@ class RequestContextMiddleware:
         path: str = scope.get("path", "")
         started = time.perf_counter()
         status_holder = {"status": 500}
+        streaming = False
 
         async def send_wrapper(message: Message) -> None:
+            nonlocal streaming
             if message["type"] == "http.response.start":
                 status_holder["status"] = message["status"]
                 headers = MutableHeaders(scope=message)
+                streaming = headers.get("content-type", "").startswith("text/event-stream")
                 headers["X-Request-ID"] = request_id
                 for name, value in _SECURITY_HEADERS.items():
                     headers.setdefault(name, value)
@@ -71,9 +75,16 @@ class RequestContextMiddleware:
         try:
             await self.app(scope, receive, send_wrapper)
         finally:
-            duration_ms = round((time.perf_counter() - started) * 1000, 2)
+            elapsed = time.perf_counter() - started
+            duration_ms = round(elapsed * 1000, 2)
+            # Route *template*, never the raw path: bounded label cardinality.
+            route = route_template(scope)
+            method = scope.get("method", "")
+            HTTP_REQUESTS.labels(method=method, route=route, status=status_holder["status"]).inc()
+            if not streaming:  # a 30-minute SSE stream isn't "latency"
+                HTTP_DURATION.labels(method=method, route=route).observe(elapsed)
             client = scope.get("client")
-            if path not in ("/healthz", "/readyz"):  # keep probe noise out of logs
+            if path not in ("/healthz", "/readyz", "/metrics"):  # keep probe noise out of logs
                 logger.info(
                     "%s %s %s %.2fms",
                     scope.get("method"),
@@ -97,3 +108,23 @@ def _header(scope: Scope, name: bytes) -> str | None:
             decoded: str = value.decode("latin-1")
             return decoded
     return None
+
+
+def route_template(scope: Scope) -> str:
+    """The matched route's template including any ``include_router`` prefix, e.g.
+    ``/api/v1/runs/{run_id}``; ``"unmatched"`` for 404s.
+
+    FastAPI includes routers lazily, so the matched route only knows its *own* path
+    (``/runs/{run_id}``). The mount prefix is the part of the real URL before the
+    suffix that the route's regex matches. Prefixes are static, so this is exact.
+    """
+    route = scope.get("route")
+    template = getattr(route, "path", None)
+    regex = getattr(route, "path_regex", None)
+    if not template or regex is None:
+        return "unmatched"
+    path: str = scope.get("path", "")
+    for i, char in enumerate(path):
+        if char == "/" and regex.fullmatch(path[i:]):
+            return path[:i] + str(template)
+    return str(template)

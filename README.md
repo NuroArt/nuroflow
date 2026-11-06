@@ -11,6 +11,10 @@ lead.captured ─▶ AI qualify ─▶ store ─▶ AI summary ─▶ Telegram a
 > architecture, a crash-safe execution engine, a DB-driven scheduler, LLM integrations, and
 > full CI/CD. It's inspired by Apache Airflow, but deliberately **not** a clone.
 
+![NuroFlow dashboard: run throughput, success rate, latency percentiles and LLM spend](docs/images/dashboard-overview.png)
+
+<sub>Dashboard overview with local demo data. More: [live run with DAG, timeline and log tail](docs/images/dashboard-run-live.png) · [failed run with error and traceback](docs/images/dashboard-run-failed.png) · [integrations & AI spend](docs/images/dashboard-integrations.png)</sub>
+
 ## Highlights
 
 - **Crash-safe by design.** PostgreSQL is the source of truth, and Celery only carries IDs. Kill
@@ -39,7 +43,10 @@ lead.captured ─▶ AI qualify ─▶ store ─▶ AI summary ─▶ Telegram a
   API, testable with one call, and can never be borrowed by another user's workflow.
 - **Serious auth.** JWT access tokens, rotating refresh tokens with theft detection, scoped
   API keys, RBAC, login throttling, and RFC 9457 error responses. ([AUTH.md](docs/AUTH.md))
-- **Operable.** Structured logs, Prometheus metrics, live log tail over SSE, and a React dashboard.
+- **Observable end to end.** A React dashboard with live DAG status, Gantt timeline and log tail
+  over SSE. Prometheus metrics from all three process types (including Celery prefork children),
+  a provisioned Grafana board and 7 symptom-based alert rules. Logs carry `run_id`/`task_run_id`
+  across processes. ([OBSERVABILITY.md](docs/OBSERVABILITY.md))
 
 ## Architecture
 
@@ -55,7 +62,7 @@ flowchart LR
     W --> X[OpenAI · Anthropic · Telegram · HTTP]
 ```
 
-Full design: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** · Schema: **[docs/DATABASE.md](docs/DATABASE.md)** · Auth: **[docs/AUTH.md](docs/AUTH.md)** · Engine: **[docs/ENGINE.md](docs/ENGINE.md)** · Scheduler: **[docs/SCHEDULER.md](docs/SCHEDULER.md)** · Integrations: **[docs/INTEGRATIONS.md](docs/INTEGRATIONS.md)** · Decisions: **[docs/adr/](docs/adr/)**
+Full design: **[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)** · Schema: **[docs/DATABASE.md](docs/DATABASE.md)** · Auth: **[docs/AUTH.md](docs/AUTH.md)** · Engine: **[docs/ENGINE.md](docs/ENGINE.md)** · Scheduler: **[docs/SCHEDULER.md](docs/SCHEDULER.md)** · Integrations: **[docs/INTEGRATIONS.md](docs/INTEGRATIONS.md)** · Observability: **[docs/OBSERVABILITY.md](docs/OBSERVABILITY.md)** · Decisions: **[docs/adr/](docs/adr/)**
 
 ## Quick start
 
@@ -65,6 +72,8 @@ make admin email=you@example.com   # first admin (prompts for a password)
 make api                           # terminal 1 → http://127.0.0.1:8000/docs
 make worker                        # terminal 2 → executes tasks
 make scheduler                     # terminal 3 → cron, retries, recovery
+make web-install && make web       # terminal 4 → dashboard on http://localhost:5173
+make observe                       # optional: Prometheus :9090 + Grafana :3000
 ```
 
 Then import and run the reference workflow: see [docs/ENGINE.md](docs/ENGINE.md#running-it).
@@ -85,8 +94,8 @@ OpenAI · Anthropic · Telegram Bot API · React + Tailwind · Docker · GitHub 
 | 3 | WorkflowSpec + DAG validation, orchestrator, executor, operators, Celery | ✅ Done |
 | 4 | Scheduler: cron, retries, reaper, timeouts, events & webhooks | ✅ Done |
 | 5 | Telegram, OpenAI, Anthropic, notification service | ✅ Done |
-| 6 | Logging, metrics, SSE log tail, React dashboard | ⏳ Next |
-| 7 | Production Docker, hardening, CI/CD, test suite ≥ 85% | ⬜ |
+| 6 | Logging, metrics, SSE log tail, React dashboard | ✅ Done |
+| 7 | Production Docker, hardening, CI/CD, test suite ≥ 85% | ⏳ Next |
 
 ## Project layout
 

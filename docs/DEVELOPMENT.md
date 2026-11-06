@@ -19,7 +19,7 @@ make migrate     # creates all 16 tables
 make check       # lint + mypy strict + tests + migration drift check
 ```
 
-Expected result: `315 passed`, coverage ~93%, `No new upgrade operations detected.`
+Expected result: `337 passed`, coverage ~93%, `No new upgrade operations detected.`
 
 ## Run the API
 

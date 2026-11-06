@@ -30,3 +30,7 @@ frontend/dist/
 !.vscode/extensions.json
 .DS_Store
 Thumbs.db
+
+# Local runtime and build caches
+dump.rdb
+*.tsbuildinfo

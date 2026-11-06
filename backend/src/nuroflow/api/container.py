@@ -27,6 +27,7 @@ from nuroflow.integrations.factory import build_llm_providers, build_telegram_cl
 from nuroflow.integrations.llm.base import LLMProvider
 from nuroflow.integrations.telegram.base import TelegramClient
 from nuroflow.notifications.delivery import NotificationTransport, build_transport
+from nuroflow.observability.db_gauges import DbGaugeRefresher
 from nuroflow.operators.registry import OperatorRegistry, build_registry
 from nuroflow.services.auth import AuthPolicy
 from nuroflow.workers.app_factory import create_celery_app
@@ -50,6 +51,7 @@ class AppContainer:
     llm_providers: Mapping[str, LLMProvider]
     telegram: TelegramClient
     notification_transport: NotificationTransport
+    db_gauges: DbGaugeRefresher
 
     async def aclose(self) -> None:
         await self.redis.aclose()
@@ -113,4 +115,5 @@ def build_container(
         llm_providers=llm_providers,
         telegram=telegram,
         notification_transport=build_transport(settings, telegram=telegram, clock=clock),
+        db_gauges=DbGaugeRefresher(engine, queues=settings.worker_queues),
     )

@@ -1,0 +1,62 @@
+# Alerts are about symptoms users feel, each with a runbook hint.
+groups:
+  - name: nuroflow
+    rules:
+      - alert: NuroFlowSchedulerStalled
+        # No tick for 1 minute: crons, retries and the reaper have all stopped.
+        expr: time() - max(nuroflow_scheduler_last_tick_timestamp_seconds) > 60
+        for: 1m
+        labels: { severity: critical }
+        annotations:
+          summary: Scheduler has not ticked for over a minute
+          runbook: Check nuroflow-scheduler logs and DB connectivity. Replicas are safe to restart.
+
+      - alert: NuroFlowSchedulerLagging
+        expr: max(nuroflow_scheduler_lag_seconds) > 120
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: Cron triggers are firing more than 2 minutes late
+
+      - alert: NuroFlowQueueBacklog
+        # Workers can't keep up: the oldest queued task has waited over 5 minutes.
+        expr: max(nuroflow_oldest_queued_task_age_seconds) > 300
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: Tasks are waiting more than 5 minutes for a worker
+          runbook: Check worker health, then scale the queue with the deepest backlog (nuroflow_queue_depth).
+
+      - alert: NuroFlowHighRunFailureRate
+        expr: |
+          sum(rate(nuroflow_runs_finished_total{status="failed"}[15m]))
+            / clamp_min(sum(rate(nuroflow_runs_finished_total{status=~"succeeded|failed"}[15m])), 1e-9)
+            > 0.2
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: More than 20% of runs are failing
+
+      - alert: NuroFlowApiErrors
+        expr: |
+          sum(rate(nuroflow_http_requests_total{status=~"5.."}[5m]))
+            / clamp_min(sum(rate(nuroflow_http_requests_total[5m])), 1e-9) > 0.05
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: Over 5% of API requests return 5xx
+
+      - alert: NuroFlowNotificationBacklog
+        expr: max(nuroflow_notifications_pending) > 50
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: Alerts are not being delivered (outbox backlog)
+
+      - alert: NuroFlowLLMSpendSpike
+        # Tune the threshold to your budget: this fires above $10/hour of estimated spend.
+        expr: sum(increase(nuroflow_llm_cost_usd_total[1h])) > 10
+        labels: { severity: warning }
+        annotations:
+          summary: Estimated LLM spend exceeded $10 in the last hour
+          runbook: Look for a runaway retry loop or a workflow fired in a tight loop (GET /usage/llm).
