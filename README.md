@@ -1,6 +1,6 @@
 # NuroFlow
 
-[![CI](https://github.com/nuroworks/nuroflow/actions/workflows/ci.yml/badge.svg)](https://github.com/nuroworks/nuroflow/actions/workflows/ci.yml)
+[![CI](https://github.com/Nuroart/nuroflow/actions/workflows/ci.yml/badge.svg)](https://github.com/Nuroart/nuroflow/actions/workflows/ci.yml)
 ![coverage](https://img.shields.io/badge/coverage-93%25-3d8bff)
 ![python](https://img.shields.io/badge/python-3.12-3d8bff)
 ![license](https://img.shields.io/badge/license-MIT-3d8bff)

@@ -38,7 +38,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 FROM python:${PYTHON_VERSION}-slim AS runtime
 LABEL org.opencontainers.image.title="nuroflow-backend" \
       org.opencontainers.image.description="NuroFlow API, worker, scheduler and migrations" \
-      org.opencontainers.image.source="https://github.com/nuroworks/nuroflow" \
+      org.opencontainers.image.source="https://github.com/Nuroart/nuroflow" \
       org.opencontainers.image.licenses="MIT"
 
 # tini as PID 1: forwards SIGTERM so Celery and the scheduler shut down gracefully,

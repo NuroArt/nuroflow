@@ -17,7 +17,7 @@ RUN npm run build
 # nginx-unprivileged: runs as uid 101 and listens on 8080 (no root, no CAP_NET_BIND).
 FROM nginxinc/nginx-unprivileged:1.30-alpine AS runtime
 LABEL org.opencontainers.image.title="nuroflow-web" \
-      org.opencontainers.image.source="https://github.com/nuroworks/nuroflow" \
+      org.opencontainers.image.source="https://github.com/Nuroart/nuroflow" \
       org.opencontainers.image.licenses="MIT"
 # Patch OS packages published after the base image was built (CI rebuilds weekly so
 # fixes land without waiting for upstream), and remove curl: nothing here uses it
