@@ -16,7 +16,7 @@ classifiers = [
 # Each phase appends its own block, so the history shows *why* every dependency exists.
 dependencies = [
     # Phase 1: data layer + configuration
-    "sqlalchemy>=2.0.36,<2.1",
+    "sqlalchemy>=2.0.36,<2.2",
     "psycopg[binary]>=3.2,<4",
     "alembic>=1.14,<2",
     "pydantic>=2.9,<3",
